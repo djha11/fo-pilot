@@ -42,6 +42,23 @@ def test_paper_threshold_accepts_candidate_above_75_percent():
     result = scan_vertical_spreads([lower, upper], lot_size=75, minimum_pop=0.75)
     assert len(result) == 1
     assert result[0]["legs"][0]["entry_price"] == 9.5
+    assert result[0]["expected_value_status"] == "EV_UNCALIBRATED"
+    assert "target_reward_risk" in result[0]
+
+
+def test_research_mode_retains_but_classifies_below_pop_candidate():
+    lower = _row(23549, put_pop=0.70)
+    upper = _row(23550, put_pop=0.70)
+    lower["put_options"]["market_data"]["ask_price"] = 9
+    upper["put_options"]["market_data"]["bid_price"] = 9.5
+
+    result = scan_vertical_spreads(
+        [lower, upper], lot_size=75, minimum_pop=0.75, include_rejected=True
+    )
+
+    assert len(result) == 1
+    assert result[0]["qualified_for_paper_entry"] is False
+    assert "POP_BELOW_MINIMUM" in result[0]["rejection_reasons"]
 
 
 def test_accepts_only_when_both_limits_pass():

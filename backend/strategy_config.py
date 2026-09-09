@@ -1,0 +1,25 @@
+STRATEGY_VERSION = "paper-research-v1"
+MODEL_VERSION = "vendor-pop-uncalibrated-v1"
+
+CAPITAL_INR = 50_000
+MAX_LOSS_PER_TRADE_INR = 350.0
+MAX_DAILY_LOSS_INR = 600.0
+MAX_SIMULTANEOUS_STRATEGIES = 1
+MAX_NEW_TRADES_PER_DAY = 2
+
+PAPER_MIN_POP = 0.75
+REAL_MIN_POP = 0.95
+EXPIRY_DAY_MIN_POP = 0.97
+ESTIMATED_CHARGES_INR = 40.0
+PROFIT_TARGET_RATIO = 0.50
+MIN_TARGET_REWARD_RISK = 0.40
+MIN_EXPECTED_VALUE = 0.0
+
+EXPERIMENTAL_SCORE_WEIGHTS = {
+    "expected_value": 0.30,
+    "probability_quality": 0.25,
+    "reward_risk": 0.20,
+    "market_regime_fit": 0.10,
+    "liquidity": 0.10,
+    "execution_quality": 0.05,
+}

@@ -4,11 +4,19 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from math import isfinite
 
+from strategy_config import (
+    ESTIMATED_CHARGES_INR,
+    EXPIRY_DAY_MIN_POP,
+    MIN_TARGET_REWARD_RISK,
+    MODEL_VERSION,
+    PROFIT_TARGET_RATIO,
+    STRATEGY_VERSION,
+)
+
 
 MIN_POP = 0.95
-EXPIRY_DAY_MIN_POP = 0.97
 MAX_LOSS = 350.0
-ESTIMATED_CHARGES = 40.0
+ESTIMATED_CHARGES = ESTIMATED_CHARGES_INR
 
 
 @dataclass
@@ -25,6 +33,18 @@ class Opportunity:
     underlying_spot: float
     legs: list[dict]
     rationale: list[str]
+    research_classification: str
+    qualified_for_paper_entry: bool
+    qualification_checks: dict
+    rejection_reasons: list[str]
+    profit_target_inr: float
+    target_reward_risk: float
+    maximum_reward_risk: float
+    expected_value_status: str
+    expected_value_inr: None
+    expected_value_per_risk: None
+    strategy_version: str
+    model_version: str
 
 
 def _number(value, default=0.0) -> float:
@@ -76,7 +96,8 @@ def _expiry_day(expiry: str) -> bool:
 
 
 def scan_vertical_spreads(
-    chain: list[dict], lot_size: int = 75, minimum_pop: float = MIN_POP
+    chain: list[dict], lot_size: int = 75, minimum_pop: float = MIN_POP,
+    include_rejected: bool = False,
 ) -> list[dict]:
     if not chain:
         return []
@@ -105,12 +126,12 @@ def scan_vertical_spreads(
             pop = _normalise_pop(_greeks(short_put).get("pop"))
             max_profit = max(credit * lot_size - ESTIMATED_CHARGES, 0)
             max_loss = max((width - credit) * lot_size + ESTIMATED_CHARGES, 0)
-            if credit > 0 and pop >= min_pop and max_loss <= MAX_LOSS:
+            if credit > 0 and (include_rejected or (pop >= min_pop and max_loss <= MAX_LOSS)):
                 candidates.append(
                     _build(
                         "Bull Put Spread", expiry, is_expiry_day, pop, max_profit,
                         max_loss, spot, short_put, long_put, upper_strike,
-                        lower_strike, "SELL", "BUY", lot_size,
+                        lower_strike, "SELL", "BUY", lot_size, min_pop,
                     )
                 )
 
@@ -124,12 +145,12 @@ def scan_vertical_spreads(
             pop = _normalise_pop(_greeks(short_call).get("pop"))
             max_profit = max(credit * lot_size - ESTIMATED_CHARGES, 0)
             max_loss = max((width - credit) * lot_size + ESTIMATED_CHARGES, 0)
-            if credit > 0 and pop >= min_pop and max_loss <= MAX_LOSS:
+            if credit > 0 and (include_rejected or (pop >= min_pop and max_loss <= MAX_LOSS)):
                 candidates.append(
                     _build(
                         "Bear Call Spread", expiry, is_expiry_day, pop, max_profit,
                         max_loss, spot, short_call, long_call, lower_strike,
-                        upper_strike, "SELL", "BUY", lot_size,
+                        upper_strike, "SELL", "BUY", lot_size, min_pop,
                     )
                 )
 
@@ -157,8 +178,29 @@ def _build(
     short_action: str,
     long_action: str,
     lot_size: int,
+    minimum_pop: float,
 ) -> Opportunity:
     reward_risk = max_profit / max(max_loss, 1)
+    profit_target = max_profit * PROFIT_TARGET_RATIO
+    target_reward_risk = profit_target / max(max_loss, 1)
+    checks = {
+        "POP": pop >= minimum_pop,
+        "LIQUIDITY": _is_liquid(short_option) and _is_liquid(long_option),
+        "MAX_LOSS": 0 < max_loss <= MAX_LOSS,
+        "REWARD_RISK": target_reward_risk >= MIN_TARGET_REWARD_RISK,
+        "EV": None,
+        "REGIME": None,
+        "DATA_QUALITY": True,
+    }
+    reason_codes = {
+        "POP": "POP_BELOW_MINIMUM",
+        "LIQUIDITY": "INSUFFICIENT_LIQUIDITY",
+        "MAX_LOSS": "MAX_LOSS_EXCEEDED",
+        "REWARD_RISK": "TARGET_REWARD_RISK_BELOW_MINIMUM",
+        "DATA_QUALITY": "DATA_QUALITY_FAILED",
+    }
+    rejection_reasons = [reason_codes[key] for key, passed in checks.items() if passed is False and key in reason_codes]
+    qualified = not rejection_reasons
     score = min(100.0, pop * 80 + min(reward_risk, 1) * 20)
     option_type = "PE" if "Put" in strategy else "CE"
     opportunity_id = (
@@ -195,8 +237,20 @@ def _build(
             },
         ],
         rationale=[
-            f"Upstox option-chain POP is {pop:.1%}",
+            f"Uncalibrated Upstox short-leg POP is {pop:.1%}",
             f"Worst-case loss including estimated charges is ₹{max_loss:.0f}",
             "Both legs have bid, ask, quantity and open interest",
         ],
+        research_classification="PAPER_RESEARCH_CANDIDATE",
+        qualified_for_paper_entry=qualified,
+        qualification_checks=checks,
+        rejection_reasons=rejection_reasons,
+        profit_target_inr=round(profit_target, 2),
+        target_reward_risk=round(target_reward_risk, 4),
+        maximum_reward_risk=round(reward_risk, 4),
+        expected_value_status="EV_UNCALIBRATED",
+        expected_value_inr=None,
+        expected_value_per_risk=None,
+        strategy_version=STRATEGY_VERSION,
+        model_version=MODEL_VERSION,
     )

@@ -22,6 +22,13 @@ from historical_training import DailyRegime, candles_to_daily, regime_is_safe
 from scanner import scan_vertical_spreads
 from paper_engine import maybe_enter, maybe_exit, paper_pnl
 from market_clock import indian_market_date
+from strategy_config import (
+    CAPITAL_INR, EXPERIMENTAL_SCORE_WEIGHTS, MAX_DAILY_LOSS_INR,
+    MAX_LOSS_PER_TRADE_INR, MAX_NEW_TRADES_PER_DAY,
+    MAX_SIMULTANEOUS_STRATEGIES, MIN_EXPECTED_VALUE,
+    MIN_TARGET_REWARD_RISK, MODEL_VERSION, PAPER_MIN_POP,
+    PROFIT_TARGET_RATIO, REAL_MIN_POP, STRATEGY_VERSION,
+)
 from upstox import (
     UpstoxMarketDataError,
     UpstoxSandboxError,
@@ -42,11 +49,11 @@ app.add_middleware(
     allow_headers=["Content-Type"],
 )
 
-MAX_LOSS_PER_TRADE = 350.0
-DAILY_LOSS_LIMIT = 600.0
-MIN_PROBABILITY_OF_PROFIT = 0.95
-PAPER_MIN_PROBABILITY_OF_PROFIT = 0.75
-MAX_OPEN_POSITIONS = 1
+MAX_LOSS_PER_TRADE = MAX_LOSS_PER_TRADE_INR
+DAILY_LOSS_LIMIT = MAX_DAILY_LOSS_INR
+MIN_PROBABILITY_OF_PROFIT = REAL_MIN_POP
+PAPER_MIN_PROBABILITY_OF_PROFIT = PAPER_MIN_POP
+MAX_OPEN_POSITIONS = MAX_SIMULTANEOUS_STRATEGIES
 
 
 automation_task = None
@@ -123,12 +130,19 @@ def health():
 @app.get("/v1/risk-policy")
 def risk_policy():
     return {
-        "capital_inr": 50000,
+        "capital_inr": CAPITAL_INR,
         "max_loss_per_trade_inr": MAX_LOSS_PER_TRADE,
         "daily_loss_limit_inr": DAILY_LOSS_LIMIT,
         "minimum_probability_of_profit": MIN_PROBABILITY_OF_PROFIT,
         "paper_minimum_probability_of_profit": PAPER_MIN_PROBABILITY_OF_PROFIT,
         "max_open_positions": MAX_OPEN_POSITIONS,
+        "max_new_trades_per_day": MAX_NEW_TRADES_PER_DAY,
+        "minimum_target_reward_risk": MIN_TARGET_REWARD_RISK,
+        "minimum_expected_value": MIN_EXPECTED_VALUE,
+        "profit_target_ratio": PROFIT_TARGET_RATIO,
+        "strategy_version": STRATEGY_VERSION,
+        "model_version": MODEL_VERSION,
+        "score_weights": EXPERIMENTAL_SCORE_WEIGHTS,
         "live_trading_enabled": False,
     }
 
@@ -205,18 +219,21 @@ async def opportunities():
 
     scanned = sum(len(chain) for chain in chains)
     profiles = load_learning_profiles()
-    items = []
+    research_candidates = []
     for chain in chains:
-            items.extend(apply_learning(item, profiles) for item in scan_vertical_spreads(chain, minimum_pop=PAPER_MIN_PROBABILITY_OF_PROFIT))
-    items.sort(
+        research_candidates.extend(
+            apply_learning(item, profiles)
+            for item in scan_vertical_spreads(
+                chain, minimum_pop=PAPER_MIN_PROBABILITY_OF_PROFIT,
+                include_rejected=True,
+            )
+        )
+    research_candidates.sort(
         key=lambda item: (
             item["probability_of_profit"], item["score"], item["max_profit_inr"]
         ),
         reverse=True,
     )
-    items = items[:5]
-    for rank, item in enumerate(items, start=1):
-        item["rank"] = rank
     training_report = latest_training_run()
     current_days = candles_to_daily(intraday_candles)
     if current_days and intraday_candles:
@@ -232,8 +249,20 @@ async def opportunities():
             current.realized_vol_pct,
         )
     regime_safe, regime_reasons = regime_is_safe(current_days[-1], training_report) if current_days else (False, ["Current regime data is unavailable"])
-    if training_report and training_report.get("activated") and not regime_safe:
-        items = []
+    regime_pass = not training_report or not training_report.get("activated") or regime_safe
+    for candidate in research_candidates:
+        candidate["qualification_checks"]["REGIME"] = regime_pass
+        if not regime_pass and "REGIME_FILTER_BLOCKED" not in candidate["rejection_reasons"]:
+            candidate["rejection_reasons"].append("REGIME_FILTER_BLOCKED")
+        candidate["qualified_for_paper_entry"] = not candidate["rejection_reasons"]
+        candidate["final_classification"] = (
+            "PAPER_SELECTED_ELIGIBLE" if candidate["qualified_for_paper_entry"]
+            else "PAPER_RESEARCH_ONLY"
+        )
+    qualified = [item for item in research_candidates if item["qualified_for_paper_entry"]]
+    items = qualified[:5]
+    for rank, item in enumerate(items, start=1):
+        item["rank"] = rank
     payload = {
         "items": items,
         "decision": "TRADE_CANDIDATES" if items else "NO_TRADE",
@@ -242,7 +271,7 @@ async def opportunities():
             if items
             else f"Historical loss-avoidance filter blocked trading: {', '.join(regime_reasons)}."
             if training_report and training_report.get("activated") and not regime_safe
-            else "No spread passed the 75% paper POP and ₹350 all-in loss limits."
+            else "No spread passed POP, ₹350 loss, reward/risk, liquidity and regime checks."
         ),
         "contracts_scanned": scanned,
         "expiries_scanned": list(expiries),
@@ -250,7 +279,21 @@ async def opportunities():
             "paper_minimum_probability_of_profit": PAPER_MIN_PROBABILITY_OF_PROFIT,
             "real_minimum_probability_of_profit": MIN_PROBABILITY_OF_PROFIT,
             "max_loss_per_trade_inr": MAX_LOSS_PER_TRADE,
+            "minimum_target_reward_risk": MIN_TARGET_REWARD_RISK,
+            "expected_value_status": "EV_UNCALIBRATED",
             "live_trading_enabled": False,
+        },
+        "research": {
+            "generated_candidates": len(research_candidates),
+            "qualified_candidates": len(qualified),
+            "research_only_candidates": len(research_candidates) - len(qualified),
+            "rejection_reason_counts": {
+                reason: sum(reason in item["rejection_reasons"] for item in research_candidates)
+                for reason in sorted({reason for item in research_candidates for reason in item["rejection_reasons"]})
+            },
+            "ev_status": "EV_UNCALIBRATED",
+            "strategy_version": STRATEGY_VERSION,
+            "model_version": MODEL_VERSION,
         },
         "learning": learning_summary(),
         "historical_training": training_report,
@@ -258,7 +301,7 @@ async def opportunities():
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
     try:
-        payload["persisted"] = save_scan(payload)
+        payload["persisted"] = save_scan({**payload, "research_candidates": research_candidates})
     except Exception:
         payload["persisted"] = False
     return payload
@@ -277,7 +320,7 @@ async def paper_portfolio():
         position = {**position, "unrealized_pnl_inr": unrealized}
     return {
         **summary, "open_position": position,
-        "capital_inr": 50000, "mode": "PAPER_AUTOMATIC",
+        "capital_inr": CAPITAL_INR, "mode": "PAPER_AUTOMATIC",
         "real_trading_enabled": False,
     }
 
@@ -338,7 +381,7 @@ def nifty_instruments(limit: int = 500):
 def approve_order(order: Approval):
     if order.mode != Mode.PAPER:
         raise HTTPException(403, "Live trading is disabled")
-    if order.estimated_probability < MIN_PROBABILITY_OF_PROFIT:
+    if order.estimated_probability < PAPER_MIN_PROBABILITY_OF_PROFIT:
         raise HTTPException(422, "Probability threshold not met")
     if order.planned_max_loss > MAX_LOSS_PER_TRADE:
         raise HTTPException(422, "Per-trade loss limit exceeded")
