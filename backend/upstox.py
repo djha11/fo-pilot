@@ -1,4 +1,5 @@
 import os
+from datetime import date
 
 import httpx
 
@@ -86,6 +87,25 @@ async def get_intraday_candles(
             response.raise_for_status()
     except httpx.HTTPError as exc:
         raise UpstoxMarketDataError("Unable to fetch current intraday candles") from exc
+    return response.json().get("data", {}).get("candles", [])
+
+
+async def get_historical_candles(
+    start: date,
+    end: date,
+    instrument_key: str = "NSE_INDEX|Nifty 50",
+    interval: int = 5,
+) -> list[list]:
+    encoded_key = httpx.URL("https://x/" + instrument_key).raw_path.decode().split("/", 1)[1]
+    try:
+        async with httpx.AsyncClient(timeout=40.0) as client:
+            response = await client.get(
+                f"{MARKET_API_BASE_URL}/v3/historical-candle/{encoded_key}/minutes/{interval}/{end.isoformat()}/{start.isoformat()}",
+                headers=_analytics_headers(),
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise UpstoxMarketDataError("Unable to fetch NIFTY chart history") from exc
     return response.json().get("data", {}).get("candles", [])
 
 

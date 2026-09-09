@@ -1,8 +1,8 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,7 @@ from upstox import (
     UpstoxSandboxError,
     get_ltp,
     get_intraday_candles,
+    get_historical_candles,
     get_market_status,
     get_option_chain,
     place_multi_order,
@@ -152,17 +153,33 @@ async def nifty_market():
 
 
 @app.get("/v1/market/nifty/chart")
-async def nifty_chart():
+async def nifty_chart(
+    interval: int = Query(default=5),
+    days: int = Query(default=5, ge=1, le=30),
+):
+    if interval not in {1, 2, 5, 15, 30}:
+        raise HTTPException(422, "Chart interval must be 1, 2, 5, 15 or 30 minutes")
+    today = date.today()
     try:
-        candles, status = await asyncio.gather(get_intraday_candles(interval=1), get_market_status("NSE"))
+        intraday, history, status = await asyncio.gather(
+            get_intraday_candles(interval=interval),
+            get_historical_candles(today - timedelta(days=days + 4), today - timedelta(days=1), interval=interval),
+            get_market_status("NSE"),
+        )
     except UpstoxMarketDataError as exc:
         raise HTTPException(502, str(exc)) from exc
+    unique = {str(row[0]): row for row in [*history, *intraday]}
+    candles = sorted(unique.values(), key=lambda row: row[0])
+    sessions = sorted({str(row[0])[:10] for row in candles})
+    selected_sessions = sessions[-days:]
+    candles = [row for row in candles if str(row[0])[:10] in selected_sessions]
     points = [
         {"time": row[0], "open": row[1], "high": row[2], "low": row[3], "close": row[4]}
         for row in sorted(candles, key=lambda value: value[0])
     ]
     return {
-        "instrument": "NIFTY 50", "interval": "1 minute", "points": points,
+        "instrument": "NIFTY 50", "interval": f"{interval} minute", "sessions": selected_sessions,
+        "requested_days": days, "points": points,
         "market_status": status.get("status", "UNKNOWN"),
         "market_is_open": status.get("status") == "NORMAL_OPEN",
         "as_of": datetime.now(timezone.utc).isoformat(),
