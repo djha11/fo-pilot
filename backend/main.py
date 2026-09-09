@@ -165,6 +165,7 @@ async def opportunities():
             "max_loss_per_trade_inr": MAX_LOSS_PER_TRADE,
             "live_trading_enabled": False,
         },
+        "learning": learning_summary(),
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
     try:

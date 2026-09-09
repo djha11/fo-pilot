@@ -32,11 +32,11 @@ export default function Home() {
 
   const refresh = useCallback(async () => {
     try {
-      const [marketResponse, scanResponse, learningResponse] = await Promise.all([fetch(`${API}/v1/market/nifty`), fetch(`${API}/v1/opportunities`), fetch(`${API}/v1/learning/summary`)]);
+      const [marketResponse, scanResponse] = await Promise.all([fetch(`${API}/v1/market/nifty`), fetch(`${API}/v1/opportunities`)]);
       if (!marketResponse.ok || !scanResponse.ok) throw new Error('Market engine unavailable');
       const market = await marketResponse.json();
       const scan = await scanResponse.json();
-      const learningStatus = learningResponse.ok ? await learningResponse.json() : null;
+      const learningStatus = scan.learning ?? null;
       setNifty(market.last_price);
       setPreviousClose(market.previous_close);
       setOpportunities(scan.items ?? []);
