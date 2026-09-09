@@ -39,6 +39,19 @@ async def get_ltp(instrument_key: str = "NSE_INDEX|Nifty 50") -> dict:
     return response.json()
 
 
+async def get_market_status(exchange: str = "NSE") -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                f"{MARKET_API_BASE_URL}/v2/market/status/{exchange}",
+                headers=_analytics_headers(),
+            )
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise UpstoxMarketDataError("Unable to fetch NSE market status") from exc
+    return response.json().get("data", {})
+
+
 async def get_option_chain(
     expiry: str, instrument_key: str = "NSE_INDEX|Nifty 50"
 ) -> list[dict]:

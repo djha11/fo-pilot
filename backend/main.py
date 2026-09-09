@@ -8,21 +8,25 @@ from pydantic import BaseModel, Field
 
 from instruments import load_nifty_derivatives, refresh_nse_instruments
 from database import (
+    current_paper_position,
     initialise_database,
     learning_summary,
     latest_training_run,
     load_learning_profiles,
     save_completed_trade,
     save_scan,
+    paper_trading_summary,
 )
 from learning import apply_learning
 from historical_training import DailyRegime, candles_to_daily, regime_is_safe
 from scanner import scan_vertical_spreads
+from paper_engine import maybe_enter, maybe_exit, paper_pnl
 from upstox import (
     UpstoxMarketDataError,
     UpstoxSandboxError,
     get_ltp,
     get_intraday_candles,
+    get_market_status,
     get_option_chain,
     place_multi_order,
 )
@@ -39,16 +43,28 @@ app.add_middleware(
 MAX_LOSS_PER_TRADE = 350.0
 DAILY_LOSS_LIMIT = 600.0
 MIN_PROBABILITY_OF_PROFIT = 0.95
+PAPER_MIN_PROBABILITY_OF_PROFIT = 0.75
 MAX_OPEN_POSITIONS = 1
 
 
+automation_task = None
+
+
 @app.on_event("startup")
-def startup():
+async def startup():
+    global automation_task
     try:
         initialise_database()
     except Exception:
         # Market data remains usable if persistence is temporarily unavailable.
         pass
+    automation_task = asyncio.create_task(paper_automation_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    if automation_task:
+        automation_task.cancel()
 
 
 class Mode(str, Enum):
@@ -109,6 +125,7 @@ def risk_policy():
         "max_loss_per_trade_inr": MAX_LOSS_PER_TRADE,
         "daily_loss_limit_inr": DAILY_LOSS_LIMIT,
         "minimum_probability_of_profit": MIN_PROBABILITY_OF_PROFIT,
+        "paper_minimum_probability_of_profit": PAPER_MIN_PROBABILITY_OF_PROFIT,
         "max_open_positions": MAX_OPEN_POSITIONS,
         "live_trading_enabled": False,
     }
@@ -117,7 +134,7 @@ def risk_policy():
 @app.get("/v1/market/nifty")
 async def nifty_market():
     try:
-        body = await get_ltp()
+        body, status = await asyncio.gather(get_ltp(), get_market_status("NSE"))
     except UpstoxMarketDataError as exc:
         raise HTTPException(502, str(exc)) from exc
     quote = next(iter(body.get("data", {}).values()), {})
@@ -127,6 +144,27 @@ async def nifty_market():
         "previous_close": quote.get("cp"),
         "source": "UPSTOX_ANALYTICS",
         "read_only": True,
+        "market_status": status.get("status", "UNKNOWN"),
+        "market_is_open": status.get("status") == "NORMAL_OPEN",
+        "market_status_updated_at": status.get("last_updated"),
+        "as_of": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/v1/market/nifty/chart")
+async def nifty_chart():
+    try:
+        candles, status = await asyncio.gather(get_intraday_candles(interval=1), get_market_status("NSE"))
+    except UpstoxMarketDataError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    points = [
+        {"time": row[0], "open": row[1], "high": row[2], "low": row[3], "close": row[4]}
+        for row in sorted(candles, key=lambda value: value[0])
+    ]
+    return {
+        "instrument": "NIFTY 50", "interval": "1 minute", "points": points,
+        "market_status": status.get("status", "UNKNOWN"),
+        "market_is_open": status.get("status") == "NORMAL_OPEN",
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -148,7 +186,7 @@ async def opportunities():
     profiles = load_learning_profiles()
     items = []
     for chain in chains:
-        items.extend(apply_learning(item, profiles) for item in scan_vertical_spreads(chain))
+            items.extend(apply_learning(item, profiles) for item in scan_vertical_spreads(chain, minimum_pop=PAPER_MIN_PROBABILITY_OF_PROFIT))
     items.sort(
         key=lambda item: (
             item["probability_of_profit"], item["score"], item["max_profit_inr"]
@@ -183,12 +221,13 @@ async def opportunities():
             if items
             else f"Historical loss-avoidance filter blocked trading: {', '.join(regime_reasons)}."
             if training_report and training_report.get("activated") and not regime_safe
-            else "No spread passed the 95% POP and ₹350 all-in loss limits."
+            else "No spread passed the 75% paper POP and ₹350 all-in loss limits."
         ),
         "contracts_scanned": scanned,
         "expiries_scanned": list(expiries),
         "risk_policy": {
-            "minimum_probability_of_profit": MIN_PROBABILITY_OF_PROFIT,
+            "paper_minimum_probability_of_profit": PAPER_MIN_PROBABILITY_OF_PROFIT,
+            "real_minimum_probability_of_profit": MIN_PROBABILITY_OF_PROFIT,
             "max_loss_per_trade_inr": MAX_LOSS_PER_TRADE,
             "live_trading_enabled": False,
         },
@@ -202,6 +241,49 @@ async def opportunities():
     except Exception:
         payload["persisted"] = False
     return payload
+
+
+@app.get("/v1/paper/portfolio")
+async def paper_portfolio():
+    summary = paper_trading_summary()
+    position = current_paper_position()
+    if position:
+        try:
+            chain = await get_option_chain(position["expiry"])
+            unrealized = paper_pnl(position, chain)
+        except UpstoxMarketDataError:
+            unrealized = None
+        position = {**position, "unrealized_pnl_inr": unrealized}
+    return {
+        **summary, "open_position": position,
+        "capital_inr": 50000, "mode": "PAPER_AUTOMATIC",
+        "real_trading_enabled": False,
+    }
+
+
+async def paper_automation_cycle():
+    status = await get_market_status("NSE")
+    market_open = status.get("status") == "NORMAL_OPEN"
+    position = current_paper_position()
+    if position:
+        chain = await get_option_chain(position["expiry"])
+        pnl = paper_pnl(position, chain)
+        if pnl is not None:
+            maybe_exit(position, pnl)
+        return
+    if not market_open:
+        return
+    scan = await opportunities()
+    maybe_enter(scan["items"], market_open=True)
+
+
+async def paper_automation_loop():
+    while True:
+        try:
+            await paper_automation_cycle()
+        except Exception:
+            pass
+        await asyncio.sleep(60)
 
 
 @app.get("/v1/learning/summary")
@@ -288,10 +370,16 @@ def approve_and_place(order: StrategyApproval):
 
 
 @app.post("/v1/positions/{position_id}/exit")
-def manual_exit(position_id: str):
-    return {
-        "accepted": True,
-        "position_id": position_id,
-        "state": "EXIT_REQUESTED",
-        "mode": "PAPER",
-    }
+async def manual_exit(position_id: int):
+    position = current_paper_position()
+    if not position or position["id"] != position_id:
+        raise HTTPException(404, "Open paper position not found")
+    try:
+        chain = await get_option_chain(position["expiry"])
+    except UpstoxMarketDataError as exc:
+        raise HTTPException(502, str(exc)) from exc
+    pnl = paper_pnl(position, chain)
+    if pnl is None:
+        raise HTTPException(502, "Unable to value the paper position")
+    closed = maybe_exit(position, pnl, manual=True)
+    return {"accepted": bool(closed), "position": closed, "mode": "PAPER"}

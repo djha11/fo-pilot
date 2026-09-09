@@ -34,6 +34,16 @@ def test_rejects_probability_below_threshold():
     assert scan_vertical_spreads(rows) == []
 
 
+def test_paper_threshold_accepts_candidate_above_75_percent():
+    lower = _row(23549, put_pop=0.80)
+    upper = _row(23550, put_pop=0.80)
+    lower["put_options"]["market_data"]["ask_price"] = 9
+    upper["put_options"]["market_data"]["bid_price"] = 9.5
+    result = scan_vertical_spreads([lower, upper], lot_size=75, minimum_pop=0.75)
+    assert len(result) == 1
+    assert result[0]["legs"][0]["entry_price"] == 9.5
+
+
 def test_accepts_only_when_both_limits_pass():
     lower = _row(23549)
     upper = _row(23550)

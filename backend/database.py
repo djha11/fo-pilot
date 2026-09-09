@@ -41,6 +41,30 @@ def initialise_database() -> bool:
             return False
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS paper_positions (
+                id BIGSERIAL PRIMARY KEY,
+                opportunity_id TEXT NOT NULL,
+                strategy TEXT NOT NULL,
+                expiry TEXT NOT NULL,
+                expiry_day BOOLEAN NOT NULL DEFAULT FALSE,
+                predicted_pop NUMERIC NOT NULL,
+                planned_max_loss_inr NUMERIC NOT NULL,
+                max_profit_inr NUMERIC NOT NULL,
+                quantity INTEGER NOT NULL,
+                legs JSONB NOT NULL,
+                rationale JSONB NOT NULL DEFAULT '[]'::jsonb,
+                market_features JSONB NOT NULL DEFAULT '{}'::jsonb,
+                status TEXT NOT NULL DEFAULT 'OPEN',
+                opened_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                closed_at TIMESTAMPTZ,
+                realized_pnl_inr NUMERIC,
+                charges_inr NUMERIC NOT NULL DEFAULT 40,
+                exit_reason TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS market_scans (
                 id BIGSERIAL PRIMARY KEY,
                 scanned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -83,6 +107,94 @@ def initialise_database() -> bool:
         )
         conn.commit()
         return True
+
+
+def open_paper_position(candidate: dict) -> dict | None:
+    with connection() as conn:
+        if conn is None:
+            return None
+        existing = conn.execute(
+            "SELECT id FROM paper_positions WHERE status = 'OPEN' LIMIT 1"
+        ).fetchone()
+        if existing:
+            return None
+        row = conn.execute(
+            """
+            INSERT INTO paper_positions
+                (opportunity_id, strategy, expiry, expiry_day, predicted_pop,
+                 planned_max_loss_inr, max_profit_inr, quantity, legs, rationale,
+                 market_features)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s::jsonb)
+            RETURNING id
+            """,
+            (
+                candidate["id"], candidate["strategy"], candidate["expiry"],
+                candidate.get("expiry_day", False), candidate["probability_of_profit"],
+                candidate["max_loss_inr"], candidate["max_profit_inr"],
+                candidate["legs"][0]["quantity"], json.dumps(candidate["legs"]),
+                json.dumps(candidate.get("rationale", [])),
+                json.dumps({"underlying_spot": candidate.get("underlying_spot")}),
+            ),
+        ).fetchone()
+        conn.commit()
+        return get_paper_position(row[0])
+
+
+def _position(row) -> dict:
+    keys = ["id", "opportunity_id", "strategy", "expiry", "expiry_day",
+            "predicted_pop", "planned_max_loss_inr", "max_profit_inr", "quantity",
+            "legs", "rationale", "market_features", "status", "opened_at",
+            "closed_at", "realized_pnl_inr", "charges_inr", "exit_reason"]
+    result = dict(zip(keys, row))
+    for key in ("predicted_pop", "planned_max_loss_inr", "max_profit_inr", "realized_pnl_inr", "charges_inr"):
+        if result.get(key) is not None:
+            result[key] = float(result[key])
+    for key in ("opened_at", "closed_at"):
+        if result.get(key):
+            result[key] = result[key].isoformat()
+    return result
+
+
+def get_paper_position(position_id: int) -> dict | None:
+    with connection() as conn:
+        if conn is None:
+            return None
+        row = conn.execute("SELECT * FROM paper_positions WHERE id = %s", (position_id,)).fetchone()
+        return _position(row) if row else None
+
+
+def current_paper_position() -> dict | None:
+    with connection() as conn:
+        if conn is None:
+            return None
+        row = conn.execute("SELECT * FROM paper_positions WHERE status = 'OPEN' ORDER BY id DESC LIMIT 1").fetchone()
+        return _position(row) if row else None
+
+
+def close_paper_position(position_id: int, pnl: float, reason: str) -> dict | None:
+    with connection() as conn:
+        if conn is None:
+            return None
+        row = conn.execute(
+            """UPDATE paper_positions SET status='CLOSED', closed_at=NOW(),
+               realized_pnl_inr=%s, exit_reason=%s WHERE id=%s AND status='OPEN'
+               RETURNING *""", (pnl, reason, position_id)
+        ).fetchone()
+        conn.commit()
+        return _position(row) if row else None
+
+
+def paper_trading_summary() -> dict:
+    with connection() as conn:
+        if conn is None:
+            return {"positions": [], "daily_realized_pnl_inr": 0.0}
+        rows = conn.execute("SELECT * FROM paper_positions ORDER BY id DESC LIMIT 20").fetchall()
+        daily = conn.execute(
+            """SELECT COALESCE(SUM(realized_pnl_inr), 0)
+               FROM paper_positions WHERE status='CLOSED'
+               AND closed_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'"""
+        ).fetchone()[0]
+        return {"positions": [_position(row) for row in rows], "daily_realized_pnl_inr": float(daily)}
 
 
 def save_training_run(report: dict) -> bool:

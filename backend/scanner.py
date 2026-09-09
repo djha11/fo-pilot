@@ -75,14 +75,16 @@ def _expiry_day(expiry: str) -> bool:
         return False
 
 
-def scan_vertical_spreads(chain: list[dict], lot_size: int = 75) -> list[dict]:
+def scan_vertical_spreads(
+    chain: list[dict], lot_size: int = 75, minimum_pop: float = MIN_POP
+) -> list[dict]:
     if not chain:
         return []
     rows = sorted(chain, key=lambda row: _number(row.get("strike_price")))
     spot = _number(rows[0].get("underlying_spot_price"))
     expiry = str(rows[0].get("expiry") or "")
     is_expiry_day = _expiry_day(expiry)
-    min_pop = EXPIRY_DAY_MIN_POP if is_expiry_day else MIN_POP
+    min_pop = max(minimum_pop, EXPIRY_DAY_MIN_POP if is_expiry_day else minimum_pop)
     candidates: list[Opportunity] = []
 
     for index in range(len(rows) - 1):
@@ -181,6 +183,7 @@ def _build(
                 "quantity": lot_size,
                 "strike": short_strike,
                 "option_type": option_type,
+                "entry_price": round(_number(_market(short_option).get("bid_price")), 2),
             },
             {
                 "instrument_token": long_option.get("instrument_key"),
@@ -188,6 +191,7 @@ def _build(
                 "quantity": lot_size,
                 "strike": long_strike,
                 "option_type": option_type,
+                "entry_price": round(_number(_market(long_option).get("ask_price")), 2),
             },
         ],
         rationale=[
