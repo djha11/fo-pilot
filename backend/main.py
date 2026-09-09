@@ -10,16 +10,19 @@ from instruments import load_nifty_derivatives, refresh_nse_instruments
 from database import (
     initialise_database,
     learning_summary,
+    latest_training_run,
     load_learning_profiles,
     save_completed_trade,
     save_scan,
 )
 from learning import apply_learning
+from historical_training import DailyRegime, candles_to_daily, regime_is_safe
 from scanner import scan_vertical_spreads
 from upstox import (
     UpstoxMarketDataError,
     UpstoxSandboxError,
     get_ltp,
+    get_intraday_candles,
     get_option_chain,
     place_multi_order,
 )
@@ -132,7 +135,12 @@ async def nifty_market():
 async def opportunities():
     expiries = ("current_week", "next_week")
     try:
-        chains = await asyncio.gather(*(get_option_chain(expiry) for expiry in expiries))
+        results = await asyncio.gather(
+            *(get_option_chain(expiry) for expiry in expiries),
+            get_intraday_candles(),
+            get_ltp(),
+        )
+        chains, intraday_candles, quote_body = results[:-2], results[-2], results[-1]
     except UpstoxMarketDataError as exc:
         raise HTTPException(502, str(exc)) from exc
 
@@ -150,12 +158,31 @@ async def opportunities():
     items = items[:5]
     for rank, item in enumerate(items, start=1):
         item["rank"] = rank
+    training_report = latest_training_run()
+    current_days = candles_to_daily(intraday_candles)
+    if current_days and intraday_candles:
+        quote = next(iter(quote_body.get("data", {}).values()), {})
+        previous_close = float(quote.get("cp") or 0)
+        opening = float(sorted(intraday_candles, key=lambda candle: candle[0])[0][1])
+        current = current_days[-1]
+        current_days[-1] = DailyRegime(
+            current.day,
+            round((opening / previous_close - 1) * 100, 5) if previous_close else 0.0,
+            current.range_pct,
+            current.return_pct,
+            current.realized_vol_pct,
+        )
+    regime_safe, regime_reasons = regime_is_safe(current_days[-1], training_report) if current_days else (False, ["Current regime data is unavailable"])
+    if training_report and training_report.get("activated") and not regime_safe:
+        items = []
     payload = {
         "items": items,
         "decision": "TRADE_CANDIDATES" if items else "NO_TRADE",
         "reason": (
             "Qualified candidates are ready for one-tap paper approval."
             if items
+            else f"Historical loss-avoidance filter blocked trading: {', '.join(regime_reasons)}."
+            if training_report and training_report.get("activated") and not regime_safe
             else "No spread passed the 95% POP and ₹350 all-in loss limits."
         ),
         "contracts_scanned": scanned,
@@ -166,6 +193,8 @@ async def opportunities():
             "live_trading_enabled": False,
         },
         "learning": learning_summary(),
+        "historical_training": training_report,
+        "current_regime": {"safe": regime_safe, "reasons": regime_reasons},
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
     try:
@@ -177,7 +206,7 @@ async def opportunities():
 
 @app.get("/v1/learning/summary")
 def get_learning_summary():
-    return learning_summary()
+    return {**learning_summary(), "historical_training": latest_training_run()}
 
 
 @app.post("/v1/learning/completed-paper-trade")

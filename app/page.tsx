@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch';
 const API = 'https://michel-specially-hostel-tahoe.trycloudflare.com';
 type Opportunity = { rank: number; strategy: string; expiry: string; probability_of_profit: number; max_profit_inr: number; max_loss_inr: number; score: number; legs: { transaction_type: string; strike: number; option_type: string }[]; rationale: string[] };
 type LearningSummary = { mode: 'ACTIVE' | 'COLLECTING_EVIDENCE'; completed_trades: number; profitable_trades: number; minimum_samples_per_group: number; guardrails_locked: boolean };
+type HistoricalTraining = { activated: boolean; history_start: string; history_end: string; training_days: number; validation_days: number; validation_stress_rate: number; baseline_stress_rate: number };
 
 const navItems = [
   { label: 'Overview', icon: LayoutDashboard, active: true },
@@ -29,6 +30,7 @@ export default function Home() {
   const [decision, setDecision] = useState('LOADING');
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
   const [learning, setLearning] = useState<LearningSummary | null>(null);
+  const [historicalTraining, setHistoricalTraining] = useState<HistoricalTraining | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -44,6 +46,7 @@ export default function Home() {
       setDecision(scan.decision ?? 'NO_TRADE');
       setLastUpdated(scan.as_of ?? market.as_of);
       if (learningStatus) setLearning(learningStatus);
+      if (scan.historical_training) setHistoricalTraining(scan.historical_training);
     } catch {
       setDecision('OFFLINE');
     }
@@ -134,6 +137,7 @@ export default function Home() {
                 <div className="flex items-center justify-between"><h2 className="font-bold text-slate-900">Learning engine</h2><Badge className={learning?.mode === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}><Sparkles /> {learning?.mode === 'ACTIVE' ? 'ACTIVE' : 'LEARNING'}</Badge></div>
                 <p className="mt-3 text-2xl font-bold text-slate-900">{learning?.completed_trades ?? 0} <span className="text-sm font-medium text-slate-400">completed trades</span></p>
                 <p className="mt-2 text-xs leading-relaxed text-slate-500">The engine learns separately by strategy and expiry-day condition after {learning?.minimum_samples_per_group ?? 30} comparable paper trades.</p>
+                <div className="mt-4 border-t border-sky-100 pt-4"><p className="text-xs font-semibold text-slate-700">Historical regime filter</p><p className="mt-1 text-xs text-slate-500">{historicalTraining ? `${historicalTraining.training_days} training days · ${historicalTraining.validation_days} untouched validation days` : 'Historical training not run yet'}</p>{historicalTraining && <p className={`mt-1 text-xs font-semibold ${historicalTraining.activated ? 'text-emerald-600' : 'text-amber-600'}`}>{historicalTraining.activated ? 'Validated and active' : 'Inactive — validation did not pass'}</p>}</div>
                 <div className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-50/70 p-3 text-xs font-medium text-emerald-800"><ShieldCheck className="size-4 shrink-0" /> 95% POP and ₹350 loss limits stay locked.</div>
               </div>
               <div className="rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-600 to-blue-600 p-5 text-white shadow-[0_14px_32px_rgba(2,132,199,.22)]"><div className="flex items-center justify-between"><p className="text-xs font-semibold text-sky-100">NEXT FULL SCAN</p><MoreHorizontal className="size-4 text-sky-200" /></div><div className="mt-3 flex items-end gap-2"><Clock3 className="mb-1 size-5 text-sky-200" /><span className="text-3xl font-bold tracking-tight">01:42</span></div><p className="mt-2 text-xs leading-relaxed text-sky-100">Live risk checks continue between full market scans.</p></div>

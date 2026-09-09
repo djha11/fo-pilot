@@ -54,6 +54,17 @@ def initialise_database() -> bool:
         )
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS training_runs (
+                id BIGSERIAL PRIMARY KEY,
+                trained_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                model_type TEXT NOT NULL,
+                activated BOOLEAN NOT NULL,
+                report JSONB NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS completed_paper_trades (
                 id BIGSERIAL PRIMARY KEY,
                 opportunity_id TEXT NOT NULL UNIQUE,
@@ -72,6 +83,27 @@ def initialise_database() -> bool:
         )
         conn.commit()
         return True
+
+
+def save_training_run(report: dict) -> bool:
+    with connection() as conn:
+        if conn is None:
+            return False
+        conn.execute(
+            """INSERT INTO training_runs (model_type, activated, report)
+               VALUES (%s, %s, %s::jsonb)""",
+            (report.get("model_type", "MARKET_REGIME_FILTER"), bool(report.get("activated")), json.dumps(report)),
+        )
+        conn.commit()
+        return True
+
+
+def latest_training_run() -> dict | None:
+    with connection() as conn:
+        if conn is None:
+            return None
+        row = conn.execute("SELECT report FROM training_runs ORDER BY trained_at DESC LIMIT 1").fetchone()
+        return row[0] if row else None
 
 
 def save_completed_trade(trade: dict) -> bool:
