@@ -130,10 +130,14 @@ function TradingChart({ points, chartType, marketOpen }: { points: Point[]; char
     const api = createChart(host.current, {
       autoSize: true,
       layout: { background: { type: ColorType.Solid, color: '#ffffff' }, textColor: '#475569', attributionLogo: true },
+      localization: {
+        locale: 'en-IN',
+        timeFormatter: time => formatIndianChartTime(Number(time), true),
+      },
       grid: { vertLines: { color: '#e2e8f0', style: LineStyle.Dotted }, horzLines: { color: '#e2e8f0', style: LineStyle.Dotted } },
       crosshair: { mode: CrosshairMode.Normal },
       rightPriceScale: { borderColor: '#cbd5e1', scaleMargins: { top: 0.08, bottom: 0.08 } },
-      timeScale: { borderColor: '#cbd5e1', rightOffset: 8, barSpacing: 8, minBarSpacing: 1, timeVisible: true, secondsVisible: false, shiftVisibleRangeOnNewBar: true },
+      timeScale: { borderColor: '#cbd5e1', rightOffset: 8, barSpacing: 8, minBarSpacing: 1, timeVisible: true, secondsVisible: false, shiftVisibleRangeOnNewBar: true, tickMarkFormatter: time => formatIndianChartTime(Number(time), false) },
       handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
       handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
       kineticScroll: { mouse: true, touch: true },
@@ -183,4 +187,12 @@ function TradingChart({ points, chartType, marketOpen }: { points: Point[]; char
     <div className="pointer-events-none absolute bottom-9 left-4 rounded-md bg-white/85 px-2 py-1 text-[10px] font-medium text-slate-400">Scroll: history · Pinch/wheel: zoom · Drag: pan</div>
     {marketOpen && <div className="pointer-events-none absolute right-20 top-14 flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700"><span className="size-1.5 animate-pulse rounded-full bg-emerald-500" /> LIVE</div>}
   </div>;
+}
+
+function formatIndianChartTime(unixSeconds: number, includeDate: boolean) {
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    ...(includeDate ? { day: '2-digit', month: 'short' } : {}),
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  }).format(new Date(unixSeconds * 1000));
 }
