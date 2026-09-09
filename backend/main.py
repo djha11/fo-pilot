@@ -7,7 +7,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from instruments import load_nifty_derivatives, refresh_nse_instruments
-from database import initialise_database, save_scan
+from database import (
+    initialise_database,
+    learning_summary,
+    load_learning_profiles,
+    save_completed_trade,
+    save_scan,
+)
+from learning import apply_learning
 from scanner import scan_vertical_spreads
 from upstox import (
     UpstoxMarketDataError,
@@ -68,6 +75,20 @@ class StrategyApproval(Approval):
     legs: list[OrderLeg] = Field(min_length=1, max_length=4)
 
 
+class CompletedPaperTrade(BaseModel):
+    opportunity_id: str = Field(min_length=1, max_length=100)
+    strategy: str = Field(min_length=1, max_length=60)
+    expiry_day: bool
+    opened_at: datetime | None = None
+    closed_at: datetime | None = None
+    predicted_pop: float = Field(ge=0, le=1)
+    planned_max_loss_inr: float = Field(gt=0, le=MAX_LOSS_PER_TRADE)
+    realized_pnl_inr: float
+    charges_inr: float = Field(default=0, ge=0)
+    exit_reason: str = Field(min_length=1, max_length=80)
+    market_features: dict = Field(default_factory=dict)
+
+
 @app.get("/health")
 def health():
     return {
@@ -116,9 +137,10 @@ async def opportunities():
         raise HTTPException(502, str(exc)) from exc
 
     scanned = sum(len(chain) for chain in chains)
+    profiles = load_learning_profiles()
     items = []
     for chain in chains:
-        items.extend(scan_vertical_spreads(chain))
+        items.extend(apply_learning(item, profiles) for item in scan_vertical_spreads(chain))
     items.sort(
         key=lambda item: (
             item["probability_of_profit"], item["score"], item["max_profit_inr"]
@@ -150,6 +172,18 @@ async def opportunities():
     except Exception:
         payload["persisted"] = False
     return payload
+
+
+@app.get("/v1/learning/summary")
+def get_learning_summary():
+    return learning_summary()
+
+
+@app.post("/v1/learning/completed-paper-trade")
+def record_completed_paper_trade(trade: CompletedPaperTrade):
+    if not save_completed_trade(trade.model_dump(mode="json")):
+        raise HTTPException(503, "Trade learning database is unavailable")
+    return {"recorded": True, "learning": learning_summary()}
 
 
 @app.post("/v1/instruments/nifty/refresh")

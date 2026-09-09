@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch';
 
 const API = 'https://michel-specially-hostel-tahoe.trycloudflare.com';
 type Opportunity = { rank: number; strategy: string; expiry: string; probability_of_profit: number; max_profit_inr: number; max_loss_inr: number; score: number; legs: { transaction_type: string; strike: number; option_type: string }[]; rationale: string[] };
+type LearningSummary = { mode: 'ACTIVE' | 'COLLECTING_EVIDENCE'; completed_trades: number; profitable_trades: number; minimum_samples_per_group: number; guardrails_locked: boolean };
 
 const navItems = [
   { label: 'Overview', icon: LayoutDashboard, active: true },
@@ -27,19 +28,22 @@ export default function Home() {
   const [contractsScanned, setContractsScanned] = useState(0);
   const [decision, setDecision] = useState('LOADING');
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+  const [learning, setLearning] = useState<LearningSummary | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [marketResponse, scanResponse] = await Promise.all([fetch(`${API}/v1/market/nifty`), fetch(`${API}/v1/opportunities`)]);
+      const [marketResponse, scanResponse, learningResponse] = await Promise.all([fetch(`${API}/v1/market/nifty`), fetch(`${API}/v1/opportunities`), fetch(`${API}/v1/learning/summary`)]);
       if (!marketResponse.ok || !scanResponse.ok) throw new Error('Market engine unavailable');
       const market = await marketResponse.json();
       const scan = await scanResponse.json();
+      const learningStatus = learningResponse.ok ? await learningResponse.json() : null;
       setNifty(market.last_price);
       setPreviousClose(market.previous_close);
       setOpportunities(scan.items ?? []);
       setContractsScanned(scan.contracts_scanned ?? 0);
       setDecision(scan.decision ?? 'NO_TRADE');
       setLastUpdated(scan.as_of ?? market.as_of);
+      if (learningStatus) setLearning(learningStatus);
     } catch {
       setDecision('OFFLINE');
     }
@@ -104,7 +108,7 @@ export default function Home() {
           <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
             <div className="overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-[0_8px_30px_rgba(15,23,42,.035)]">
               <div className="flex flex-col gap-3 border-b border-sky-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
-                <div><div className="flex items-center gap-2"><Sparkles className="size-4 text-sky-500" /><h2 className="font-bold text-slate-900">Qualified opportunities</h2><Badge className="bg-sky-100 text-sky-700">2</Badge></div><p className="mt-1 text-xs text-slate-400">Only trades above 95% calibrated probability and within ₹350 total risk</p></div>
+                <div><div className="flex items-center gap-2"><Sparkles className="size-4 text-sky-500" /><h2 className="font-bold text-slate-900">Qualified opportunities</h2><Badge className="bg-sky-100 text-sky-700">{opportunities.length}</Badge></div><p className="mt-1 text-xs text-slate-400">Only trades above 95% calibrated probability and within ₹350 total risk</p></div>
                 <Button variant="outline" className="border-sky-100 text-slate-600" onClick={refresh}><RefreshCcw /> Refresh analysis</Button>
               </div>
               <div className="divide-y divide-sky-50">
@@ -125,6 +129,12 @@ export default function Home() {
                 <div className="mb-5 flex items-center justify-between"><h2 className="font-bold text-slate-900">Risk guard</h2><Badge className="bg-emerald-50 text-emerald-700"><ShieldCheck /> ACTIVE</Badge></div>
                 <RiskRow label="Per-trade loss cap" value="₹350" detail="Includes all charges" used={93} /><RiskRow label="Daily loss cap" value="₹600" detail="₹600 remaining" used={0} /><RiskRow label="Open positions" value="0 / 1" detail="One at a time" used={0} />
                 <div className="mt-5 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3 text-xs leading-relaxed text-emerald-800">All account-level controls are healthy. No safety blocks detected.</div>
+              </div>
+              <div className="rounded-2xl border border-sky-100 bg-white p-5 shadow-[0_8px_30px_rgba(15,23,42,.035)]">
+                <div className="flex items-center justify-between"><h2 className="font-bold text-slate-900">Learning engine</h2><Badge className={learning?.mode === 'ACTIVE' ? 'bg-emerald-50 text-emerald-700' : 'bg-sky-50 text-sky-700'}><Sparkles /> {learning?.mode === 'ACTIVE' ? 'ACTIVE' : 'LEARNING'}</Badge></div>
+                <p className="mt-3 text-2xl font-bold text-slate-900">{learning?.completed_trades ?? 0} <span className="text-sm font-medium text-slate-400">completed trades</span></p>
+                <p className="mt-2 text-xs leading-relaxed text-slate-500">The engine learns separately by strategy and expiry-day condition after {learning?.minimum_samples_per_group ?? 30} comparable paper trades.</p>
+                <div className="mt-4 flex items-center gap-2 rounded-xl bg-emerald-50/70 p-3 text-xs font-medium text-emerald-800"><ShieldCheck className="size-4 shrink-0" /> 95% POP and ₹350 loss limits stay locked.</div>
               </div>
               <div className="rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-600 to-blue-600 p-5 text-white shadow-[0_14px_32px_rgba(2,132,199,.22)]"><div className="flex items-center justify-between"><p className="text-xs font-semibold text-sky-100">NEXT FULL SCAN</p><MoreHorizontal className="size-4 text-sky-200" /></div><div className="mt-3 flex items-end gap-2"><Clock3 className="mb-1 size-5 text-sky-200" /><span className="text-3xl font-bold tracking-tight">01:42</span></div><p className="mt-2 text-xs leading-relaxed text-sky-100">Live risk checks continue between full market scans.</p></div>
               <button className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white py-3 text-sm font-semibold text-rose-600 transition hover:bg-rose-50"><OctagonAlert className="size-4" /> Emergency exit all</button>

@@ -11,3 +11,11 @@ Risk policy:
 - Minimum calibrated probability of profit: 95%
 - Maximum simultaneous positions: 1
 - No qualifying signal means no trade
+
+Learning loop:
+
+- Every completed paper trade stores its original signal, net result, charges, and exit reason.
+- Comparable trades are grouped by strategy and expiry-day status.
+- Bayesian smoothing prevents a few lucky or unlucky trades from changing rankings.
+- A group needs 30 completed trades before its adjustment becomes active.
+- Learning can move ranking score by at most 5 points and cannot weaken POP or loss limits.
