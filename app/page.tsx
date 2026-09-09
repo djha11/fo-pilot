@@ -39,21 +39,37 @@ export default function Home() {
   const [exiting, setExiting] = useState(false);
 
   const refresh = useCallback(async () => {
-    try {
-      const responses = await Promise.all([
-        fetch(`${API}/v1/market/nifty`), fetch(`${API}/v1/opportunities`),
-        fetch(`${API}/v1/market/nifty/chart`), fetch(`${API}/v1/paper/portfolio`),
-      ]);
-      if (!responses.every(r => r.ok)) throw new Error();
-      const [market, scan, chartData, portfolio] = await Promise.all(responses.map(r => r.json()));
+    const get = async (path: string) => {
+      const response = await fetch(`${API}${path}`);
+      if (!response.ok) throw new Error(`${path}: ${response.status}`);
+      return response.json();
+    };
+    const results = await Promise.allSettled([
+      get('/v1/market/nifty'), get('/v1/opportunities'),
+      get('/v1/market/nifty/chart'), get('/v1/paper/portfolio'),
+    ]);
+    const [marketResult, scanResult, chartResult, portfolioResult] = results;
+    if (marketResult.status === 'fulfilled') {
+      const market = marketResult.value;
       setNifty(market.last_price); setPreviousClose(market.previous_close);
       setMarketStatus(market.market_status ?? 'UNKNOWN'); setMarketOpen(Boolean(market.market_is_open));
+    }
+    if (scanResult.status === 'fulfilled') {
+      const scan = scanResult.value;
       setItems(scan.items ?? []); setScanned(scan.contracts_scanned ?? 0);
-      setDecision(scan.decision ?? 'NO_TRADE'); setReason(scan.reason ?? ''); setUpdated(scan.as_of ?? market.as_of);
+      setDecision(scan.decision ?? 'NO_TRADE'); setReason(scan.reason ?? ''); setUpdated(scan.as_of ?? null);
       setLearning(scan.learning ?? null); setTraining(scan.historical_training ?? null);
-      setChart(chartData.points ?? []); setPosition(portfolio.open_position ?? null);
+    }
+    if (chartResult.status === 'fulfilled') {
+      const chartData = chartResult.value;
+      setChart(chartData.points ?? []);
+    }
+    if (portfolioResult.status === 'fulfilled') {
+      const portfolio = portfolioResult.value;
+      setPosition(portfolio.open_position ?? null);
       setDailyPnl(portfolio.daily_realized_pnl_inr ?? 0);
-    } catch {
+    }
+    if (marketResult.status === 'rejected' && scanResult.status === 'rejected') {
       setDecision('OFFLINE'); setMarketStatus('UNAVAILABLE'); setMarketOpen(false);
       setReason('The market gateway is temporarily unavailable. Automatic entry is paused safely.');
     }
