@@ -1,5 +1,7 @@
 # dependencies
 /node_modules
+/.pnpm-store/
+**/__pycache__/
 /.pnp
 .pnp.*
 .yarn/*

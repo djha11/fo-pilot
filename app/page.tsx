@@ -1,16 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Activity, Bell, ChartNoAxesCombined, Check, ChevronDown, CircleGauge, Clock3, Cloud, LayoutDashboard, LogOut, Menu, MoreHorizontal, OctagonAlert, Power, Radio, RefreshCcw, ShieldCheck, Sparkles, TrendingUp, WalletCards, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 
-const opportunities = [
-  { rank: 1, strategy: 'Bull Call Spread', legs: 'Buy 24,850 CE · Sell 24,900 CE', expiry: '10 Sep', pop: 96.4, maxProfit: 542, maxLoss: 327, score: 94, note: 'Momentum aligned · Liquid strikes' },
-  { rank: 2, strategy: 'Bull Put Spread', legs: 'Sell 24,750 PE · Buy 24,700 PE', expiry: '10 Sep', pop: 95.8, maxProfit: 286, maxLoss: 339, score: 91, note: 'Strong support · Positive EV' },
-];
+const API = 'https://michel-specially-hostel-tahoe.trycloudflare.com';
+type Opportunity = { rank: number; strategy: string; expiry: string; probability_of_profit: number; max_profit_inr: number; max_loss_inr: number; score: number; legs: { transaction_type: string; strike: number; option_type: string }[]; rationale: string[] };
 
 const navItems = [
   { label: 'Overview', icon: LayoutDashboard, active: true },
@@ -23,6 +21,34 @@ export default function Home() {
   const [paperMode, setPaperMode] = useState(true);
   const [approved, setApproved] = useState<number | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [nifty, setNifty] = useState<number | null>(null);
+  const [previousClose, setPreviousClose] = useState<number | null>(null);
+  const [contractsScanned, setContractsScanned] = useState(0);
+  const [decision, setDecision] = useState('LOADING');
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [marketResponse, scanResponse] = await Promise.all([fetch(`${API}/v1/market/nifty`), fetch(`${API}/v1/opportunities`)]);
+      if (!marketResponse.ok || !scanResponse.ok) throw new Error('Market engine unavailable');
+      const market = await marketResponse.json();
+      const scan = await scanResponse.json();
+      setNifty(market.last_price);
+      setPreviousClose(market.previous_close);
+      setOpportunities(scan.items ?? []);
+      setContractsScanned(scan.contracts_scanned ?? 0);
+      setDecision(scan.decision ?? 'NO_TRADE');
+      setLastUpdated(scan.as_of ?? market.as_of);
+    } catch {
+      setDecision('OFFLINE');
+    }
+  }, []);
+
+  useEffect(() => { refresh(); const timer = window.setInterval(refresh, 60000); return () => window.clearInterval(timer); }, [refresh]);
+
+  const change = nifty !== null && previousClose ? nifty - previousClose : null;
+  const changePct = change !== null && previousClose ? (change / previousClose) * 100 : null;
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -42,7 +68,7 @@ export default function Home() {
         </nav>
         <div className="mt-auto rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 to-white p-4">
           <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-sky-700"><Cloud className="size-4" /> Cloud engine online</div>
-          <p className="text-[11px] leading-relaxed text-slate-500">Live data is fresh. Last tick received 0.8 seconds ago.</p>
+          <p className="text-[11px] leading-relaxed text-slate-500">{lastUpdated ? `Read-only scan updated ${new Date(lastUpdated).toLocaleTimeString('en-IN')}` : decision === 'OFFLINE' ? 'Market gateway unavailable' : 'Connecting to market engine…'}</p>
         </div>
         <button className="mt-3 flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-slate-500 hover:bg-slate-50"><LogOut className="size-[18px]" /> Sign out</button>
       </aside>
@@ -65,12 +91,12 @@ export default function Home() {
               <div className={`grid size-10 place-items-center rounded-xl ${paperMode ? 'bg-sky-100 text-sky-700' : 'bg-rose-100 text-rose-700'}`}>{paperMode ? <RefreshCcw className="size-5" /> : <Power className="size-5" />}</div>
               <div><div className="flex items-center gap-2"><p className="text-sm font-bold text-slate-800">{paperMode ? 'Paper trading' : 'Real money'}</p><Badge className={paperMode ? 'bg-sky-100 text-sky-700' : 'bg-rose-100 text-rose-700'}>{paperMode ? 'SAFE MODE' : 'LIVE CAPITAL'}</Badge></div><p className="mt-0.5 text-xs text-slate-400">Every entry still needs your approval</p></div>
             </div>
-            <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 sm:justify-start"><span className={`text-xs font-semibold ${paperMode ? 'text-sky-700' : 'text-slate-400'}`}>Paper</span><Switch checked={!paperMode} onCheckedChange={(checked) => { setPaperMode(!checked); setApproved(null); }} aria-label="Toggle real money mode" /><span className={`text-xs font-semibold ${!paperMode ? 'text-rose-600' : 'text-slate-400'}`}>Real money</span></div>
+            <div className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 sm:justify-start"><span className="text-xs font-semibold text-sky-700">Paper</span><Switch checked={false} disabled aria-label="Real-money mode is locked" /><span className="text-xs font-semibold text-slate-400">Real money locked</span></div>
           </section>
 
           <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <MetricCard icon={<TrendingUp />} label="NIFTY 50" value="24,842.65" meta="+126.40 · +0.51%" positive />
-            <MetricCard icon={<Radio />} label="Market regime" value="Mild bullish" meta="82% confidence" />
+            <MetricCard icon={<TrendingUp />} label="NIFTY 50" value={nifty?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? 'Connecting…'} meta={change === null ? 'Upstox read-only feed' : `${change >= 0 ? '+' : ''}${change.toFixed(2)} · ${changePct?.toFixed(2)}%`} positive={change !== null && change >= 0} />
+            <MetricCard icon={<Radio />} label="Scanner decision" value={decision === 'TRADE_CANDIDATES' ? 'Review candidates' : decision === 'NO_TRADE' ? 'No trade' : decision === 'OFFLINE' ? 'Offline' : 'Scanning…'} meta={`${contractsScanned} contracts checked`} />
             <MetricCard icon={<WalletCards />} label="Available capital" value="₹50,000" meta="No open exposure" />
             <MetricCard icon={<ShieldCheck />} label="Daily risk left" value="₹600" meta="100% remaining" progress />
           </section>
@@ -79,18 +105,19 @@ export default function Home() {
             <div className="overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-[0_8px_30px_rgba(15,23,42,.035)]">
               <div className="flex flex-col gap-3 border-b border-sky-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between">
                 <div><div className="flex items-center gap-2"><Sparkles className="size-4 text-sky-500" /><h2 className="font-bold text-slate-900">Qualified opportunities</h2><Badge className="bg-sky-100 text-sky-700">2</Badge></div><p className="mt-1 text-xs text-slate-400">Only trades above 95% calibrated probability and within ₹350 total risk</p></div>
-                <Button variant="outline" className="border-sky-100 text-slate-600"><RefreshCcw /> Refresh analysis</Button>
+                <Button variant="outline" className="border-sky-100 text-slate-600" onClick={refresh}><RefreshCcw /> Refresh analysis</Button>
               </div>
               <div className="divide-y divide-sky-50">
+                {opportunities.length === 0 && <div className="p-10 text-center"><ShieldCheck className="mx-auto size-9 text-sky-500" /><h3 className="mt-3 font-bold text-slate-900">No qualified trade</h3><p className="mt-1 text-sm text-slate-500">Nothing passed both the 95% probability and ₹350 all-in loss limits. The safest action is no trade.</p></div>}
                 {opportunities.map((trade) => <article key={trade.rank} className="p-5 transition hover:bg-sky-50/25">
                   <div className="flex flex-col gap-5 lg:flex-row lg:items-center">
-                    <div className="flex min-w-0 flex-1 gap-4"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-sky-500 text-sm font-bold text-white">{trade.rank}</div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-bold text-slate-900">{trade.strategy}</h3><Badge variant="outline" className="border-sky-100 text-slate-500">NIFTY · {trade.expiry}</Badge></div><p className="mt-1 text-xs font-medium text-slate-500">{trade.legs}</p><p className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-600"><Check className="size-3.5" /> {trade.note}</p></div></div>
-                    <div className="grid grid-cols-4 gap-4 text-center lg:w-[340px]"><TradeStat label="POP" value={`${trade.pop}%`} accent /><TradeStat label="MAX PROFIT" value={`₹${trade.maxProfit}`} /><TradeStat label="MAX LOSS" value={`₹${trade.maxLoss}`} danger /><TradeStat label="SCORE" value={`${trade.score}/100`} /></div>
+                    <div className="flex min-w-0 flex-1 gap-4"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-sky-500 text-sm font-bold text-white">{trade.rank}</div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h3 className="font-bold text-slate-900">{trade.strategy}</h3><Badge variant="outline" className="border-sky-100 text-slate-500">NIFTY · {trade.expiry}</Badge></div><p className="mt-1 text-xs font-medium text-slate-500">{trade.legs.map(leg => `${leg.transaction_type} ${leg.strike} ${leg.option_type}`).join(' · ')}</p><p className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-600"><Check className="size-3.5" /> {trade.rationale[2]}</p></div></div>
+                    <div className="grid grid-cols-4 gap-4 text-center lg:w-[340px]"><TradeStat label="POP" value={`${(trade.probability_of_profit * 100).toFixed(1)}%`} accent /><TradeStat label="MAX PROFIT" value={`₹${trade.max_profit_inr}`} /><TradeStat label="MAX LOSS" value={`₹${trade.max_loss_inr}`} danger /><TradeStat label="SCORE" value={`${trade.score}/100`} /></div>
                     <Button className={`h-10 min-w-[118px] rounded-xl ${approved === trade.rank ? 'bg-emerald-500 hover:bg-emerald-500' : 'bg-sky-600 hover:bg-sky-700'}`} onClick={() => setApproved(trade.rank)} disabled={approved !== null && approved !== trade.rank}>{approved === trade.rank ? <><Check /> Approved</> : <>Review trade <ChevronDown /></>}</Button>
                   </div>
                 </article>)}
               </div>
-              <div className="flex items-center gap-2 bg-sky-50/50 px-5 py-3 text-xs text-slate-500"><ShieldCheck className="size-4 text-sky-500" /> 316 candidates checked · 314 rejected by safety filters</div>
+              <div className="flex items-center gap-2 bg-sky-50/50 px-5 py-3 text-xs text-slate-500"><ShieldCheck className="size-4 text-sky-500" /> {contractsScanned} contracts checked · {opportunities.length} qualified</div>
             </div>
 
             <aside className="space-y-5">
