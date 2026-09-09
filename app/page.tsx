@@ -30,7 +30,7 @@ export default function Home() {
   const [chart, setChart] = useState<Point[]>([]);
   const [chartType, setChartType] = useState<'line' | 'candles'>('candles');
   const [chartInterval, setChartInterval] = useState(5);
-  const [chartDays, setChartDays] = useState(5);
+  const [chartDays, setChartDays] = useState(30);
   const [marketStatus, setMarketStatus] = useState('CHECKING');
   const [marketOpen, setMarketOpen] = useState(false);
   const [scanned, setScanned] = useState(0);

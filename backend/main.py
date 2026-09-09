@@ -27,7 +27,7 @@ from upstox import (
     UpstoxSandboxError,
     get_ltp,
     get_intraday_candles,
-    get_historical_candles,
+    get_historical_candles_range,
     get_market_status,
     get_option_chain,
     place_multi_order,
@@ -163,10 +163,11 @@ async def nifty_chart(
     # EC2 runs in UTC. Use the exchange calendar date so the just-completed
     # Indian session is available immediately after midnight IST.
     today = indian_market_date()
+    lookback_days = max(days + 4, int(days * 1.7) + 7)
     try:
         intraday, history, status = await asyncio.gather(
             get_intraday_candles(interval=interval),
-            get_historical_candles(today - timedelta(days=days + 4), today - timedelta(days=1), interval=interval),
+            get_historical_candles_range(today - timedelta(days=lookback_days), today - timedelta(days=1), interval=interval),
             get_market_status("NSE"),
         )
     except UpstoxMarketDataError as exc:

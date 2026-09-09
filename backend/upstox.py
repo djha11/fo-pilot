@@ -1,7 +1,9 @@
+import asyncio
 import os
 from datetime import date
 
 import httpx
+from history_window import historical_date_chunks
 
 
 SANDBOX_MULTI_ORDER_URL = "https://sandbox.upstox.com/v2/order/multi/place"
@@ -107,6 +109,19 @@ async def get_historical_candles(
     except httpx.HTTPError as exc:
         raise UpstoxMarketDataError("Unable to fetch NIFTY chart history") from exc
     return response.json().get("data", {}).get("candles", [])
+
+
+async def get_historical_candles_range(
+    start: date,
+    end: date,
+    instrument_key: str = "NSE_INDEX|Nifty 50",
+    interval: int = 5,
+) -> list[list]:
+    batches = await asyncio.gather(*(
+        get_historical_candles(chunk_start, chunk_end, instrument_key, interval)
+        for chunk_start, chunk_end in historical_date_chunks(start, end)
+    ))
+    return [candle for batch in batches for candle in batch]
 
 
 def place_multi_order(legs: list[dict]) -> dict:
