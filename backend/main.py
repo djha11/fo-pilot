@@ -21,6 +21,7 @@ from learning import apply_learning
 from historical_training import DailyRegime, candles_to_daily, regime_is_safe
 from scanner import scan_vertical_spreads
 from paper_engine import maybe_enter, maybe_exit, paper_pnl
+from market_clock import indian_market_date
 from upstox import (
     UpstoxMarketDataError,
     UpstoxSandboxError,
@@ -159,7 +160,9 @@ async def nifty_chart(
 ):
     if interval not in {1, 2, 5, 15, 30}:
         raise HTTPException(422, "Chart interval must be 1, 2, 5, 15 or 30 minutes")
-    today = date.today()
+    # EC2 runs in UTC. Use the exchange calendar date so the just-completed
+    # Indian session is available immediately after midnight IST.
+    today = indian_market_date()
     try:
         intraday, history, status = await asyncio.gather(
             get_intraday_candles(interval=interval),
