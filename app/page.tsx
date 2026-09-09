@@ -1,8 +1,8 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Area, AreaChart, Bar, Brush, CartesianGrid, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { Activity, Bell, ChartNoAxesCombined, Check, Clock3, Cloud, LayoutDashboard, Menu, OctagonAlert, Radio, RefreshCcw, ShieldCheck, Sparkles, TrendingUp, WalletCards, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AreaSeries, CandlestickSeries, ColorType, CrosshairMode, createChart, LineStyle, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts';
+import { Activity, Bell, ChartNoAxesCombined, Check, Clock3, Cloud, Crosshair, Expand, LayoutDashboard, Menu, OctagonAlert, Radio, RefreshCcw, RotateCcw, ShieldCheck, Sparkles, TrendingUp, WalletCards, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -81,11 +81,6 @@ export default function Home() {
   useEffect(() => { refresh(); const timer = window.setInterval(refresh, 15000); return () => window.clearInterval(timer); }, [refresh]);
   const change = nifty !== null && previousClose ? nifty - previousClose : null;
   const changePct = change !== null && previousClose ? change / previousClose * 100 : null;
-  const points = useMemo(() => chart.map(p => ({
-    ...p,
-    label: new Date(p.time).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
-    wick: [p.low, p.high], body: [Math.min(p.open, p.close), Math.max(p.open, p.close)],
-  })), [chart]);
   const riskLeft = Math.max(0, 600 + Math.min(0, dailyPnl));
   const today = new Intl.DateTimeFormat('en-IN', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Kolkata' }).format(new Date());
   const go = (id: string) => { document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }); setMenu(false); };
@@ -104,7 +99,7 @@ export default function Home() {
         <section className="mb-6 flex flex-col gap-4 rounded-2xl border border-sky-100 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-sky-100 text-sky-700"><RefreshCcw className="size-5" /></div><div><div className="flex items-center gap-2"><p className="text-sm font-bold text-slate-800">Automatic paper trading</p><Badge className="bg-emerald-100 text-emerald-700">RUNNING</Badge></div><p className="mt-0.5 text-xs text-slate-500">Automatic entry and exit · no approval required</p></div></div><div className="flex gap-2"><Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">PAPER ≥ 75%</Badge><Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">REAL ≥ 95% · LOCKED</Badge></div></section>
         <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><button onClick={() => go('live-chart')} className="text-left"><Metric icon={<TrendingUp />} label="NIFTY 50 · OPEN CHART" value={nifty?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? 'Connecting…'} meta={change === null ? 'Upstox market feed' : `${change >= 0 ? '+' : ''}${change.toFixed(2)} · ${changePct?.toFixed(2)}%`} positive={change !== null && change >= 0} /></button><Metric icon={<Radio />} label="SCANNER DECISION" value={decision === 'TRADE_CANDIDATES' ? 'Candidates ready' : decision === 'NO_TRADE' ? 'No trade' : decision === 'OFFLINE' ? 'Offline' : 'Scanning…'} meta={`${scanned} contracts checked`} /><Metric icon={<WalletCards />} label="PAPER CAPITAL" value="₹50,000" meta={position ? '1 open position' : 'No open exposure'} /><Metric icon={<ShieldCheck />} label="DAILY RISK LEFT" value={`₹${riskLeft.toFixed(0)}`} meta={`Realized today: ${money(dailyPnl)}`} progress={riskLeft / 6} /></section>
 
-        <section id="live-chart" className="mb-6 scroll-mt-24 overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm"><div className="border-b border-sky-100 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-slate-900">NIFTY 50 trading chart</h2><p className="mt-1 text-xs text-slate-500">Historical sessions flow into today’s live candles automatically</p></div><div className="flex items-center gap-2"><Badge className={marketOpen ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}>{marketOpen ? 'LIVE' : 'CLOSED'}</Badge><Button variant="outline" onClick={refresh}><RefreshCcw /> Refresh</Button></div></div><div className="mt-4 flex flex-wrap gap-2"><Control label="Chart" values={['candles','line']} value={chartType} onChange={v => setChartType(v as 'line'|'candles')} /><Control label="Interval" values={[1,2,5,15,30]} value={chartInterval} onChange={v => setChartInterval(Number(v))} suffix="m" /><Control label="History" values={[1,5,10,30]} value={chartDays} onChange={v => setChartDays(Number(v))} suffix="d" /></div></div><div className="h-[360px] p-4 sm:h-[470px]"><ResponsiveContainer width="100%" height="100%">{chartType === 'line' ? <AreaChart data={points}><defs><linearGradient id="fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#0ea5e9" stopOpacity={.28}/><stop offset="100%" stopColor="#0ea5e9" stopOpacity={.02}/></linearGradient></defs><ChartAxes/><Area type="monotone" dataKey="close" stroke="#0284c7" strokeWidth={2} fill="url(#fill)" isAnimationActive={false}/><Brush dataKey="label" height={28} stroke="#38bdf8" travellerWidth={8}/></AreaChart> : <ComposedChart data={points}><ChartAxes/><Bar dataKey="wick" barSize={1} fill="#64748b" isAnimationActive={false}/><Bar dataKey="body" barSize={7} isAnimationActive={false} shape={(p: any) => <rect x={p.x} y={p.y} width={Math.max(p.width,2)} height={Math.max(p.height,2)} rx={1} fill={p.payload.close >= p.payload.open ? '#10b981' : '#ef4444'} />}/><Brush dataKey="label" height={28} stroke="#38bdf8" travellerWidth={8}/></ComposedChart>}</ResponsiveContainer></div><p className="px-5 pb-4 text-xs text-slate-400">Drag the blue timeline handles to move backward or zoom into a session.</p></section>
+        <section id="live-chart" className="mb-6 scroll-mt-24 overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm"><div className="border-b border-sky-100 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-slate-900">NIFTY 50 trading chart</h2><p className="mt-1 text-xs text-slate-500">Scroll to move through history · pinch or wheel to zoom · live candles form on the right</p></div><div className="flex items-center gap-2"><Badge className={marketOpen ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}>{marketOpen ? 'LIVE' : 'CLOSED'}</Badge><Button variant="outline" onClick={refresh}><RefreshCcw /> Refresh</Button></div></div><div className="mt-4 flex flex-wrap gap-2"><Control label="Chart" values={['candles','line']} value={chartType} onChange={v => setChartType(v as 'line'|'candles')} /><Control label="Interval" values={[1,2,5,15,30]} value={chartInterval} onChange={v => setChartInterval(Number(v))} suffix="m" /><Control label="History" values={[1,5,10,30]} value={chartDays} onChange={v => setChartDays(Number(v))} suffix="d" /></div></div><TradingChart points={chart} chartType={chartType} marketOpen={marketOpen} /></section>
 
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_350px]"><div className="space-y-6">
           <div id="positions" className="scroll-mt-24 rounded-2xl border border-sky-100 bg-white shadow-sm"><Title title="Paper position" subtitle="Monitored continuously by the cloud engine" />{position ? <div className="p-5"><div className="flex flex-col justify-between gap-5 sm:flex-row"><div><div className="flex items-center gap-2"><Badge className="bg-emerald-50 text-emerald-700">OPEN</Badge><h3 className="font-bold text-slate-900">{position.strategy}</h3></div><p className="mt-2 text-sm text-slate-600">{position.legs.map(l => `${l.transaction_type} ${l.strike} ${l.option_type} @ ₹${l.entry_price}`).join(' · ')}</p><p className="mt-2 text-xs text-slate-400">Opened {new Date(position.opened_at).toLocaleString('en-IN')} · Expiry {position.expiry}</p></div><div className="flex items-end gap-3 sm:flex-col"><p className={`text-2xl font-bold ${(position.unrealized_pnl_inr ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{position.unrealized_pnl_inr === null ? 'Valuing…' : money(position.unrealized_pnl_inr)}</p><Button variant="destructive" onClick={exit} disabled={exiting}>{exiting ? 'Exiting…' : 'Exit now'}</Button></div></div><div className="mt-5 grid gap-3 sm:grid-cols-3"><Mini label="ENTRY POP" value={`${(position.predicted_pop * 100).toFixed(1)}%`} /><Mini label="PROFIT TARGET" value={money(position.max_profit_inr * .5)} /><Mini label="MAX LOSS GUARD" value={`-${money(position.planned_max_loss_inr)}`} /></div></div> : <Empty title="No open position" text="The engine will enter the highest-ranked qualified paper trade automatically during market hours." />}</div>
@@ -123,4 +118,69 @@ function Title({ title, subtitle, badge }: { title: string; subtitle: string; ba
 function Empty({ title, text }: { title: string; text: string }) { return <div className="p-9 text-center"><ShieldCheck className="mx-auto size-8 text-sky-500" /><h3 className="mt-3 font-bold">{title}</h3><p className="mx-auto mt-1 max-w-xl text-sm text-slate-500">{text}</p></div>; }
 function Risk({ label, value, detail, used }: { label: string; value: string; detail: string; used: number }) { return <div className="mb-4"><div className="flex justify-between text-xs"><span className="font-medium text-slate-600">{label}</span><span className="font-bold">{value}</span></div><Progress value={Math.min(100, Math.max(0, used))} className="mt-2 [&_[data-slot=progress-indicator]]:bg-sky-500 [&_[data-slot=progress-track]]:bg-sky-50" /><p className="mt-1.5 text-[10px] text-slate-400">{detail}</p></div>; }
 function Control({ label, values, value, onChange, suffix = '' }: { label: string; values: readonly (string|number)[]; value: string|number; onChange: (value: string|number) => void; suffix?: string }) { return <div className="flex items-center gap-1 rounded-xl bg-slate-50 p-1"><span className="px-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>{values.map(v => <button key={v} onClick={() => onChange(v)} className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold capitalize transition ${value === v ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{v}{typeof v === 'number' ? suffix : ''}</button>)}</div>; }
-function ChartAxes() { return <><CartesianGrid strokeDasharray="3 3" stroke="#e0f2fe" vertical={false}/><XAxis dataKey="label" minTickGap={65} tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false}/><YAxis domain={['dataMin - 10', 'dataMax + 10']} orientation="right" tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} width={66}/><Tooltip content={({ active, payload }) => { const p = payload?.[0]?.payload; return active && p ? <div className="rounded-xl border border-sky-200 bg-white p-3 text-xs shadow-lg"><p className="mb-2 font-semibold text-slate-700">{p.label}</p><div className="grid grid-cols-2 gap-x-4 gap-y-1 text-slate-500"><span>Open</span><b>{p.open}</b><span>High</span><b>{p.high}</b><span>Low</span><b>{p.low}</b><span>Close</span><b className={p.close >= p.open ? 'text-emerald-600' : 'text-rose-600'}>{p.close}</b></div></div> : null; }}/></>; }
+function TradingChart({ points, chartType, marketOpen }: { points: Point[]; chartType: 'line'|'candles'; marketOpen: boolean }) {
+  const host = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | ISeriesApi<'Area'> | null>(null);
+  const firstLoad = useRef(true);
+  const [hovered, setHovered] = useState<Point | null>(null);
+
+  useEffect(() => {
+    if (!host.current) return;
+    const api = createChart(host.current, {
+      autoSize: true,
+      layout: { background: { type: ColorType.Solid, color: '#ffffff' }, textColor: '#475569', attributionLogo: true },
+      grid: { vertLines: { color: '#e2e8f0', style: LineStyle.Dotted }, horzLines: { color: '#e2e8f0', style: LineStyle.Dotted } },
+      crosshair: { mode: CrosshairMode.Normal },
+      rightPriceScale: { borderColor: '#cbd5e1', scaleMargins: { top: 0.08, bottom: 0.08 } },
+      timeScale: { borderColor: '#cbd5e1', rightOffset: 8, barSpacing: 8, minBarSpacing: 1, timeVisible: true, secondsVisible: false, shiftVisibleRangeOnNewBar: true },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
+      kineticScroll: { mouse: true, touch: true },
+    });
+    const series = chartType === 'candles'
+      ? api.addSeries(CandlestickSeries, { upColor: '#089981', downColor: '#f23645', borderVisible: false, wickUpColor: '#089981', wickDownColor: '#f23645', priceLineVisible: true })
+      : api.addSeries(AreaSeries, { lineColor: '#0284c7', topColor: 'rgba(14,165,233,.28)', bottomColor: 'rgba(14,165,233,.02)', lineWidth: 2, priceLineVisible: true });
+    api.subscribeCrosshairMove(param => {
+      if (!param.time) return setHovered(null);
+      const hit = points.find(p => Math.floor(new Date(p.time).getTime() / 1000) === Number(param.time));
+      setHovered(hit ?? null);
+    });
+    chartRef.current = api;
+    seriesRef.current = series as typeof seriesRef.current;
+    firstLoad.current = true;
+    return () => { api.remove(); chartRef.current = null; seriesRef.current = null; };
+  }, [chartType]);
+
+  useEffect(() => {
+    const api = chartRef.current;
+    const series = seriesRef.current;
+    if (!api || !series || !points.length) return;
+    const data = points.map(p => chartType === 'candles'
+      ? { time: Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp, open: p.open, high: p.high, low: p.low, close: p.close }
+      : { time: Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp, value: p.close });
+    (series as any).setData(data);
+    if (firstLoad.current) {
+      api.timeScale().fitContent();
+      api.timeScale().scrollToRealTime();
+      firstLoad.current = false;
+    } else if (api.timeScale().scrollPosition() < 3) {
+      api.timeScale().scrollToRealTime();
+    }
+  }, [points, chartType]);
+
+  const goLive = () => chartRef.current?.timeScale().scrollToRealTime();
+  const reset = () => { chartRef.current?.timeScale().fitContent(); chartRef.current?.timeScale().scrollToRealTime(); };
+  const fullscreen = () => host.current?.parentElement?.requestFullscreen?.();
+  const shown = hovered ?? points.at(-1) ?? null;
+
+  return <div className="relative bg-white">
+    <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 px-4 py-2 text-xs">
+      {shown && <><b className="text-slate-800">NIFTY 50</b><span>O <b>{shown.open.toFixed(2)}</b></span><span>H <b className="text-emerald-600">{shown.high.toFixed(2)}</b></span><span>L <b className="text-rose-600">{shown.low.toFixed(2)}</b></span><span>C <b className={shown.close >= shown.open ? 'text-emerald-600' : 'text-rose-600'}>{shown.close.toFixed(2)}</b></span></>}
+      <div className="ml-auto flex items-center gap-1"><button onClick={goLive} className="flex items-center gap-1 rounded-md px-2 py-1 font-semibold text-sky-700 hover:bg-sky-50"><Crosshair className="size-3.5" /> Go live</button><button onClick={reset} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100" aria-label="Reset chart"><RotateCcw className="size-3.5" /></button><button onClick={fullscreen} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100" aria-label="Fullscreen chart"><Expand className="size-3.5" /></button></div>
+    </div>
+    <div ref={host} className="h-[390px] touch-pan-y sm:h-[520px]" />
+    <div className="pointer-events-none absolute bottom-9 left-4 rounded-md bg-white/85 px-2 py-1 text-[10px] font-medium text-slate-400">Scroll: history · Pinch/wheel: zoom · Drag: pan</div>
+    {marketOpen && <div className="pointer-events-none absolute right-20 top-14 flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700"><span className="size-1.5 animate-pulse rounded-full bg-emerald-500" /> LIVE</div>}
+  </div>;
+}
