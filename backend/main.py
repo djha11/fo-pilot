@@ -306,7 +306,7 @@ async def opportunities():
             "paper_max_daily_loss_inr": PAPER_MAX_DAILY_LOSS_INR,
             "minimum_target_reward_risk": MIN_TARGET_REWARD_RISK,
             "paper_minimum_target_reward_risk": PAPER_MIN_TARGET_REWARD_RISK,
-            "expected_value_status": "EV_UNCALIBRATED",
+            "expected_value_status": "POSITIVE_PROXY_REQUIRED",
             "live_trading_enabled": False,
         },
         "research": {

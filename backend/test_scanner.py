@@ -43,7 +43,8 @@ def test_paper_threshold_accepts_candidate_above_75_percent():
     result = scan_vertical_spreads([lower, upper], lot_size=75, minimum_pop=0.75)
     assert len(result) == 1
     assert result[0]["legs"][0]["entry_price"] == 9.5
-    assert result[0]["expected_value_status"] == "EV_UNCALIBRATED"
+    assert result[0]["expected_value_status"] in {"POSITIVE_PROXY", "NON_POSITIVE_PROXY"}
+    assert isinstance(result[0]["expected_value_inr"], float)
     assert "target_reward_risk" in result[0]
 
 

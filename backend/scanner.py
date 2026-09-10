@@ -42,8 +42,8 @@ class Opportunity:
     target_reward_risk: float
     maximum_reward_risk: float
     expected_value_status: str
-    expected_value_inr: None
-    expected_value_per_risk: None
+    expected_value_inr: float
+    expected_value_per_risk: float
     strategy_version: str
     model_version: str
 
@@ -186,12 +186,16 @@ def _build(
     reward_risk = max_profit / max(max_loss, 1)
     profit_target = max_profit * PROFIT_TARGET_RATIO
     target_reward_risk = profit_target / max(max_loss, 1)
+    # Transparent stop/target EV proxy. Charges are already included in both
+    # max_profit and max_loss. It is a safety gate, not a calibrated forecast.
+    expected_value = pop * profit_target - (1 - pop) * max_loss
+    expected_value_per_risk = expected_value / max(max_loss, 1)
     checks = {
         "POP": pop >= minimum_pop,
         "LIQUIDITY": _is_liquid(short_option) and _is_liquid(long_option),
         "MAX_LOSS": 0 < max_loss <= PAPER_MAX_LOSS_PER_TRADE_INR,
         "REWARD_RISK": target_reward_risk >= PAPER_MIN_TARGET_REWARD_RISK,
-        "EV": None,
+        "EV": expected_value > 0,
         "REGIME": None,
         "DATA_QUALITY": True,
     }
@@ -200,6 +204,7 @@ def _build(
         "LIQUIDITY": "INSUFFICIENT_LIQUIDITY",
         "MAX_LOSS": "MAX_LOSS_EXCEEDED",
         "REWARD_RISK": "TARGET_REWARD_RISK_BELOW_MINIMUM",
+        "EV": "EXPECTED_VALUE_NOT_POSITIVE",
         "DATA_QUALITY": "DATA_QUALITY_FAILED",
     }
     rejection_reasons = [reason_codes[key] for key, passed in checks.items() if passed is False and key in reason_codes]
@@ -251,9 +256,9 @@ def _build(
         profit_target_inr=round(profit_target, 2),
         target_reward_risk=round(target_reward_risk, 4),
         maximum_reward_risk=round(reward_risk, 4),
-        expected_value_status="EV_UNCALIBRATED",
-        expected_value_inr=None,
-        expected_value_per_risk=None,
+        expected_value_status="POSITIVE_PROXY" if expected_value > 0 else "NON_POSITIVE_PROXY",
+        expected_value_inr=round(expected_value, 2),
+        expected_value_per_risk=round(expected_value_per_risk, 4),
         strategy_version=STRATEGY_VERSION,
         model_version=MODEL_VERSION,
     )
