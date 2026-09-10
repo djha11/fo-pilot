@@ -7,7 +7,8 @@ from math import isfinite
 from strategy_config import (
     ESTIMATED_CHARGES_INR,
     EXPIRY_DAY_MIN_POP,
-    MIN_TARGET_REWARD_RISK,
+    NIFTY_MARKET_LOT, PAPER_MAX_LOSS_PER_TRADE_INR,
+    PAPER_MIN_TARGET_REWARD_RISK,
     MODEL_VERSION,
     PROFIT_TARGET_RATIO,
     STRATEGY_VERSION,
@@ -96,7 +97,7 @@ def _expiry_day(expiry: str) -> bool:
 
 
 def scan_vertical_spreads(
-    chain: list[dict], lot_size: int = 75, minimum_pop: float = MIN_POP,
+    chain: list[dict], lot_size: int = NIFTY_MARKET_LOT, minimum_pop: float = MIN_POP,
     include_rejected: bool = False,
 ) -> list[dict]:
     if not chain:
@@ -126,7 +127,7 @@ def scan_vertical_spreads(
             pop = _normalise_pop(_greeks(short_put).get("pop"))
             max_profit = max(credit * lot_size - ESTIMATED_CHARGES, 0)
             max_loss = max((width - credit) * lot_size + ESTIMATED_CHARGES, 0)
-            if credit > 0 and (include_rejected or (pop >= min_pop and max_loss <= MAX_LOSS)):
+            if credit > 0 and (include_rejected or (pop >= min_pop and max_loss <= PAPER_MAX_LOSS_PER_TRADE_INR)):
                 candidates.append(
                     _build(
                         "Bull Put Spread", expiry, is_expiry_day, pop, max_profit,
@@ -145,7 +146,7 @@ def scan_vertical_spreads(
             pop = _normalise_pop(_greeks(short_call).get("pop"))
             max_profit = max(credit * lot_size - ESTIMATED_CHARGES, 0)
             max_loss = max((width - credit) * lot_size + ESTIMATED_CHARGES, 0)
-            if credit > 0 and (include_rejected or (pop >= min_pop and max_loss <= MAX_LOSS)):
+            if credit > 0 and (include_rejected or (pop >= min_pop and max_loss <= PAPER_MAX_LOSS_PER_TRADE_INR)):
                 candidates.append(
                     _build(
                         "Bear Call Spread", expiry, is_expiry_day, pop, max_profit,
@@ -188,8 +189,8 @@ def _build(
     checks = {
         "POP": pop >= minimum_pop,
         "LIQUIDITY": _is_liquid(short_option) and _is_liquid(long_option),
-        "MAX_LOSS": 0 < max_loss <= MAX_LOSS,
-        "REWARD_RISK": target_reward_risk >= MIN_TARGET_REWARD_RISK,
+        "MAX_LOSS": 0 < max_loss <= PAPER_MAX_LOSS_PER_TRADE_INR,
+        "REWARD_RISK": target_reward_risk >= PAPER_MIN_TARGET_REWARD_RISK,
         "EV": None,
         "REGIME": None,
         "DATA_QUALITY": True,

@@ -1,5 +1,6 @@
 from scanner import scan_vertical_spreads
 from learning import apply_learning, build_profile
+from strategy_config import PAPER_MAX_LOSS_PER_TRADE_INR
 
 
 def _row(strike, spot=23600, put_pop=0.96, call_pop=0.96):
@@ -26,7 +27,7 @@ def _row(strike, spot=23600, put_pop=0.96, call_pop=0.96):
 
 
 def test_rejects_spread_over_loss_cap():
-    assert scan_vertical_spreads([_row(23500), _row(23550)]) == []
+    assert scan_vertical_spreads([_row(23400), _row(23550)]) == []
 
 
 def test_rejects_probability_below_threshold():
@@ -83,7 +84,7 @@ def test_accepts_only_when_both_limits_pass():
     result = scan_vertical_spreads([lower, upper], lot_size=75)
     assert len(result) == 1
     assert result[0]["probability_of_profit"] >= 0.95
-    assert result[0]["max_loss_inr"] <= 350
+    assert result[0]["max_loss_inr"] <= PAPER_MAX_LOSS_PER_TRADE_INR
 
 
 def test_learning_waits_for_enough_evidence():
