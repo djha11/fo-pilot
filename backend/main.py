@@ -48,7 +48,7 @@ app = FastAPI(title="F&O Pilot Paper Engine", version="0.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://fo-pilot-risk-engine.siajha18.chatgpt.site"],
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT"],
     allow_headers=["Content-Type"],
 )
 
