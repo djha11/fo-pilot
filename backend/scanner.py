@@ -158,9 +158,11 @@ def scan_vertical_spreads(
         key=lambda item: (item.probability_of_profit, item.score, item.max_profit_inr),
         reverse=True,
     )
-    for rank, item in enumerate(candidates[:5], start=1):
+    # Return the complete priceable research universe. Presentation and execution
+    # limits belong to the API/paper engine, not the evidence-collection layer.
+    for rank, item in enumerate(candidates, start=1):
         item.rank = rank
-    return [asdict(item) for item in candidates[:5]]
+    return [asdict(item) for item in candidates]
 
 
 def _build(

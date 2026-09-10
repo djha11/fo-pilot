@@ -61,6 +61,20 @@ def test_research_mode_retains_but_classifies_below_pop_candidate():
     assert "POP_BELOW_MINIMUM" in result[0]["rejection_reasons"]
 
 
+def test_research_mode_is_not_truncated_to_five_candidates():
+    rows = [_row(23540 + strike, put_pop=0.80) for strike in range(8)]
+    for row in rows:
+        row["put_options"]["market_data"]["ask_price"] = 9
+        row["put_options"]["market_data"]["bid_price"] = 9.5
+
+    result = scan_vertical_spreads(
+        rows, lot_size=1, minimum_pop=0.75, include_rejected=True
+    )
+
+    assert len(result) > 5
+    assert [item["rank"] for item in result] == list(range(1, len(result) + 1))
+
+
 def test_accepts_only_when_both_limits_pass():
     lower = _row(23549)
     upper = _row(23550)
