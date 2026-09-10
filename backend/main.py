@@ -16,6 +16,8 @@ from database import (
     save_completed_trade,
     save_scan,
     paper_trading_summary,
+    get_engine_setting,
+    set_engine_setting,
 )
 from learning import apply_learning
 from historical_training import DailyRegime, candles_to_daily, regime_is_safe
@@ -118,6 +120,10 @@ class CompletedPaperTrade(BaseModel):
     market_features: dict = Field(default_factory=dict)
 
 
+class AutomationSetting(BaseModel):
+    automatic_order_placement: bool
+
+
 @app.get("/health")
 def health():
     return {
@@ -148,7 +154,20 @@ def risk_policy():
         "model_version": MODEL_VERSION,
         "score_weights": EXPERIMENTAL_SCORE_WEIGHTS,
         "live_trading_enabled": False,
+        "automatic_order_placement": bool(get_engine_setting("automatic_order_placement", True)),
     }
+
+
+@app.get("/v1/settings/automation")
+def automation_setting():
+    return {"automatic_order_placement": bool(get_engine_setting("automatic_order_placement", True)), "mode": "PAPER_ONLY"}
+
+
+@app.put("/v1/settings/automation")
+def update_automation_setting(setting: AutomationSetting):
+    if not set_engine_setting("automatic_order_placement", setting.automatic_order_placement):
+        raise HTTPException(503, "Settings storage is unavailable")
+    return {"saved": True, "automatic_order_placement": setting.automatic_order_placement, "mode": "PAPER_ONLY"}
 
 
 @app.get("/v1/market/nifty")
@@ -348,7 +367,25 @@ async def paper_automation_cycle():
         if pnl is not None:
             maybe_exit(position, pnl)
         return
-    maybe_enter(scan["items"], market_open=True)
+    if bool(get_engine_setting("automatic_order_placement", True)):
+        maybe_enter(scan["items"], market_open=True)
+
+
+@app.post("/v1/paper/orders/{opportunity_id}")
+async def place_paper_order(opportunity_id: str):
+    status = await get_market_status("NSE")
+    if status.get("status") != "NORMAL_OPEN":
+        raise HTTPException(409, "Paper orders can only be placed while the market is open")
+    if current_paper_position():
+        raise HTTPException(409, "A paper position is already open")
+    scan = await opportunities()
+    candidate = next((item for item in scan["items"] if item["id"] == opportunity_id), None)
+    if not candidate:
+        raise HTTPException(404, "This opportunity is no longer qualified")
+    opened = maybe_enter([candidate], market_open=True)
+    if not opened:
+        raise HTTPException(409, "Risk limits prevented this paper order")
+    return {"accepted": True, "mode": "PAPER", "position": opened}
 
 
 async def paper_automation_loop():

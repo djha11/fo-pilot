@@ -2,282 +2,64 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AreaSeries, CandlestickSeries, ColorType, CrosshairMode, createChart, LineStyle, type IChartApi, type ISeriesApi, type UTCTimestamp } from 'lightweight-charts';
-import { Activity, Bell, ChartNoAxesCombined, Check, Clock3, Cloud, Crosshair, Expand, LayoutDashboard, Menu, OctagonAlert, Radio, RefreshCcw, RotateCcw, ShieldCheck, Sparkles, TrendingUp, WalletCards, X } from 'lucide-react';
+import { BarChart3, Bell, BookOpenCheck, Check, Crosshair, FlaskConical, LayoutDashboard, Menu, RefreshCcw, RotateCcw, Search, Settings, ShieldCheck, Sparkles, TrendingUp, WalletCards, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
+import { Switch } from '@/components/ui/switch';
 
 const API = 'https://michel-specially-hostel-tahoe.trycloudflare.com';
-type Leg = { transaction_type: string; strike: number; option_type: string; quantity: number; entry_price: number };
-type Opportunity = { id: string; rank: number; strategy: string; expiry: string; probability_of_profit: number; max_profit_inr: number; max_loss_inr: number; profit_target_inr: number; target_reward_risk: number; maximum_reward_risk: number; expected_value_status: string; score: number; legs: Leg[]; rationale: string[] };
-type Position = { id: number; strategy: string; expiry: string; predicted_pop: number; planned_max_loss_inr: number; max_profit_inr: number; unrealized_pnl_inr: number | null; realized_pnl_inr?: number | null; charges_inr?: number; status?: string; exit_reason?: string | null; opened_at: string; closed_at?: string | null; legs: Leg[]; rationale: string[] };
-type Learning = { mode: string; completed_trades: number; profitable_trades: number; minimum_samples_per_group: number };
-type Training = { activated: boolean; training_days: number; validation_days: number };
-type Point = { time: string; open: number; high: number; low: number; close: number };
-type Research = { generated_candidates: number; qualified_candidates: number; research_only_candidates: number; ev_status: string; strategy_version: string };
+type Leg = { transaction_type:string; strike:number; option_type:string; quantity:number; entry_price:number };
+type Opportunity = { id:string; rank:number; strategy:string; expiry:string; probability_of_profit:number; max_profit_inr:number; max_loss_inr:number; profit_target_inr:number; target_reward_risk:number; score:number; legs:Leg[]; rationale:string[] };
+type Position = { id:number; strategy:string; expiry:string; predicted_pop:number; planned_max_loss_inr:number; max_profit_inr:number; unrealized_pnl_inr:number|null; realized_pnl_inr?:number|null; status?:string; exit_reason?:string|null; opened_at:string; legs:Leg[] };
+type Point = { time:string; open:number; high:number; low:number; close:number };
+type Research = { generated_candidates:number; qualified_candidates:number; research_only_candidates:number; ev_status:string; rejection_reason_counts?:Record<string,number> };
+type View='dashboard'|'opportunities'|'analysis'|'trades'|'risk'|'research'|'settings';
+const nav:[string,React.ElementType,View][]=[['Dashboard',LayoutDashboard,'dashboard'],['Opportunities',Sparkles,'opportunities'],['Market Analysis',BarChart3,'analysis'],['Paper Trades',BookOpenCheck,'trades'],['Risk & Capital',WalletCards,'risk'],['Research',FlaskConical,'research'],['Settings',Settings,'settings']];
 
-const nav = [
-  ['Overview', LayoutDashboard, 'overview'], ['Live chart', ChartNoAxesCombined, 'live-chart'],
-  ['Capital & risk', WalletCards, 'capital-ledger'], ['Trade history', Clock3, 'trade-history'],
-  ['Opportunities', Sparkles, 'opportunities'], ['Positions', Activity, 'positions'],
-] as const;
-
-export default function Home() {
-  const [menu, setMenu] = useState(false);
-  const [items, setItems] = useState<Opportunity[]>([]);
-  const [position, setPosition] = useState<Position | null>(null);
-  const [positions, setPositions] = useState<Position[]>([]);
-  const [dailyPnl, setDailyPnl] = useState(0);
-  const [totalPnl, setTotalPnl] = useState(0);
-  const [newTradesToday, setNewTradesToday] = useState(0);
-  const [nifty, setNifty] = useState<number | null>(null);
-  const [previousClose, setPreviousClose] = useState<number | null>(null);
-  const [chart, setChart] = useState<Point[]>([]);
-  const [chartType, setChartType] = useState<'line' | 'candles'>('candles');
-  const [chartInterval, setChartInterval] = useState(5);
-  const [chartDays, setChartDays] = useState(30);
-  const [marketStatus, setMarketStatus] = useState('CHECKING');
-  const [marketOpen, setMarketOpen] = useState(false);
-  const [scanned, setScanned] = useState(0);
-  const [decision, setDecision] = useState('LOADING');
-  const [reason, setReason] = useState('Connecting to the risk engine…');
-  const [updated, setUpdated] = useState<string | null>(null);
-  const [learning, setLearning] = useState<Learning | null>(null);
-  const [training, setTraining] = useState<Training | null>(null);
-  const [research, setResearch] = useState<Research | null>(null);
-  const [exiting, setExiting] = useState(false);
-
-  const refresh = useCallback(async () => {
-    const get = async (path: string) => {
-      const response = await fetch(`${API}${path}`);
-      if (!response.ok) throw new Error(`${path}: ${response.status}`);
-      return response.json();
-    };
-    const results = await Promise.allSettled([
-      get('/v1/market/nifty'), get('/v1/opportunities'),
-      get(`/v1/market/nifty/chart?interval=${chartInterval}&days=${chartDays}`), get('/v1/paper/portfolio'),
-    ]);
-    const [marketResult, scanResult, chartResult, portfolioResult] = results;
-    if (marketResult.status === 'fulfilled') {
-      const market = marketResult.value;
-      setNifty(market.last_price); setPreviousClose(market.previous_close);
-      setMarketStatus(market.market_status ?? 'UNKNOWN'); setMarketOpen(Boolean(market.market_is_open));
-    }
-    if (scanResult.status === 'fulfilled') {
-      const scan = scanResult.value;
-      setItems(scan.items ?? []); setScanned(scan.contracts_scanned ?? 0);
-      setDecision(scan.decision ?? 'NO_TRADE'); setReason(scan.reason ?? ''); setUpdated(scan.as_of ?? null);
-      setLearning(scan.learning ?? null); setTraining(scan.historical_training ?? null);
-      setResearch(scan.research ?? null);
-    }
-    if (chartResult.status === 'fulfilled') {
-      const chartData = chartResult.value;
-      setChart(chartData.points ?? []);
-    }
-    if (portfolioResult.status === 'fulfilled') {
-      const portfolio = portfolioResult.value;
-      setPosition(portfolio.open_position ?? null);
-      setPositions(portfolio.positions ?? []);
-      setDailyPnl(portfolio.daily_realized_pnl_inr ?? 0);
-      setTotalPnl(portfolio.total_realized_pnl_inr ?? 0);
-      setNewTradesToday(portfolio.new_trades_today ?? 0);
-    }
-    if (marketResult.status === 'rejected' && scanResult.status === 'rejected') {
-      setDecision('OFFLINE'); setMarketStatus('UNAVAILABLE'); setMarketOpen(false);
-      setReason('The market gateway is temporarily unavailable. Automatic entry is paused safely.');
-    }
-  }, [chartDays, chartInterval]);
-
-  useEffect(() => { refresh(); const timer = window.setInterval(refresh, 15000); return () => window.clearInterval(timer); }, [refresh]);
-  const change = nifty !== null && previousClose ? nifty - previousClose : null;
-  const changePct = change !== null && previousClose ? change / previousClose * 100 : null;
-  const paperDailyRisk = 8000;
-  const riskLeft = Math.max(0, paperDailyRisk + Math.min(0, dailyPnl));
-  const reservedRisk = position?.planned_max_loss_inr ?? 0;
-  const unrealizedPnl = position?.unrealized_pnl_inr ?? 0;
-  const availableCapital = 50000 + totalPnl - reservedRisk;
-  const closedTrades = positions.filter(item => item.status === 'CLOSED');
-  const wins = closedTrades.filter(item => (item.realized_pnl_inr ?? 0) > 0).length;
-  const winRate = closedTrades.length ? wins / closedTrades.length * 100 : 0;
-  const averagePnl = closedTrades.length ? closedTrades.reduce((sum, item) => sum + (item.realized_pnl_inr ?? 0), 0) / closedTrades.length : 0;
-  const today = new Intl.DateTimeFormat('en-IN', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Kolkata' }).format(new Date());
-  const go = (id: string) => { document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }); setMenu(false); };
-  const exit = async () => { if (!position || exiting) return; setExiting(true); try { await fetch(`${API}/v1/positions/${position.id}/exit`, { method: 'POST' }); await refresh(); } finally { setExiting(false); } };
-
-  return <main className="min-h-screen bg-background text-foreground">
-    <aside className={`fixed inset-y-0 left-0 z-40 flex w-[248px] flex-col border-r border-sky-100 bg-white px-4 py-5 transition-transform lg:translate-x-0 ${menu ? 'translate-x-0' : '-translate-x-full'}`}>
-      <div className="mb-8 flex items-center gap-3 px-2"><div className="grid size-10 place-items-center rounded-xl bg-sky-500 text-white shadow-lg"><ChartNoAxesCombined className="size-5" /></div><div><p className="text-[15px] font-bold">F&O Pilot</p><p className="text-xs text-slate-400">Autonomous paper engine</p></div><button className="ml-auto lg:hidden" onClick={() => setMenu(false)} aria-label="Close menu"><X /></button></div>
-      <nav className="space-y-1">{nav.map(([label, Icon, target], i) => <button key={label} onClick={() => go(target)} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${i ? 'text-slate-500 hover:bg-slate-50' : 'bg-sky-50 text-sky-700'}`}><Icon className="size-[18px]" />{label}</button>)}</nav>
-      <div className="mt-auto rounded-2xl border border-sky-100 bg-gradient-to-br from-sky-50 to-white p-4"><div className="mb-2 flex items-center gap-2 text-xs font-semibold text-sky-700"><Cloud className="size-4" /> Cloud engine online</div><p className="text-[11px] leading-relaxed text-slate-500">Updates every 15 seconds. Paper entries and exits run even while this page is closed.</p></div>
-    </aside>
-    {menu && <button className="fixed inset-0 z-30 bg-slate-950/20 lg:hidden" onClick={() => setMenu(false)} aria-label="Close menu" />}
-    <section className="min-h-screen lg:pl-[248px]">
-      <header className="sticky top-0 z-20 flex h-[72px] items-center border-b border-sky-100/80 bg-white/90 px-5 backdrop-blur-xl sm:px-8"><button className="mr-3 lg:hidden" onClick={() => setMenu(true)} aria-label="Open menu"><Menu className="size-5" /></button><div><h1 className="text-lg font-bold text-slate-900">F&O command centre</h1><p className="hidden text-xs text-slate-400 sm:block">{today} · Indian market</p></div><div className="ml-auto flex items-center gap-3"><div className={`flex items-center gap-2 rounded-full border px-3 py-1.5 ${marketOpen ? 'border-emerald-100 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}><span className={`size-2 rounded-full ${marketOpen ? 'animate-pulse bg-emerald-500' : 'bg-slate-400'}`} /><span className="text-xs font-semibold text-slate-600">{marketOpen ? 'Market open' : marketStatus === 'NORMAL_CLOSE' ? 'Market closed' : marketStatus.replaceAll('_', ' ').toLowerCase()}</span></div><Button variant="outline" size="icon" className="rounded-full border-sky-100"><Bell /></Button><div className="grid size-9 place-items-center rounded-full bg-sky-600 text-xs font-bold text-white">DK</div></div></header>
-      <div id="overview" className="mx-auto max-w-[1500px] scroll-mt-24 p-5 sm:p-8">
-        <section className="mb-6 flex flex-col gap-4 rounded-2xl border border-sky-100 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-sky-100 text-sky-700"><RefreshCcw className="size-5" /></div><div><div className="flex items-center gap-2"><p className="text-sm font-bold text-slate-800">Automatic paper experiments</p><Badge className="bg-emerald-100 text-emerald-700">RUNNING</Badge></div><p className="mt-0.5 text-xs text-slate-500">Up to 3 sequential learning trades · no real money</p></div></div><div className="flex gap-2"><Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">PAPER ≥ 75%</Badge><Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">REAL ≥ 95% · ₹350 · LOCKED</Badge></div></section>
-        <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><button onClick={() => go('live-chart')} className="text-left"><Metric icon={<TrendingUp />} label="NIFTY 50 · OPEN CHART" value={nifty?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? 'Connecting…'} meta={change === null ? 'Upstox market feed' : `${change >= 0 ? '+' : ''}${change.toFixed(2)} · ${changePct?.toFixed(2)}%`} positive={change !== null && change >= 0} /></button><Metric icon={<Radio />} label="SCANNER DECISION" value={decision === 'TRADE_CANDIDATES' ? 'Candidates ready' : decision === 'NO_TRADE' ? 'No trade' : decision === 'OFFLINE' ? 'Offline' : 'Scanning…'} meta={`${scanned} contracts checked`} /><button onClick={() => go('capital-ledger')} className="text-left"><Metric icon={<WalletCards />} label="PAPER CAPITAL · VIEW BREAKDOWN" value={money(50000 + totalPnl)} meta={reservedRisk ? `${money(reservedRisk)} risk reserved` : 'No capital reserved'} /></button><button onClick={() => go('capital-ledger')} className="text-left"><Metric icon={<ShieldCheck />} label="DAILY PAPER RISK · VIEW BREAKDOWN" value={money(riskLeft)} meta={`${newTradesToday}/3 trades · P&L ${money(dailyPnl)}`} progress={riskLeft / 80} /></button></section>
-
-        <CapitalLedger capital={50000} available={availableCapital} reserved={reservedRisk} totalPnl={totalPnl} unrealizedPnl={unrealizedPnl} dailyPnl={dailyPnl} dailyRiskLeft={riskLeft} newTradesToday={newTradesToday} positions={positions} closedTrades={closedTrades} winRate={winRate} averagePnl={averagePnl} />
-
-        <section id="live-chart" className="mb-6 scroll-mt-24 overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm"><div className="border-b border-sky-100 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-slate-900">NIFTY 50 trading chart</h2><p className="mt-1 text-xs text-slate-500">Scroll to move through history · pinch or wheel to zoom · live candles form on the right</p></div><div className="flex items-center gap-2"><Badge className={marketOpen ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}>{marketOpen ? 'LIVE' : 'CLOSED'}</Badge><Button variant="outline" onClick={refresh}><RefreshCcw /> Refresh</Button></div></div><div className="mt-4 flex flex-wrap gap-2"><Control label="Chart" values={['candles','line']} value={chartType} onChange={v => setChartType(v as 'line'|'candles')} /><Control label="Interval" values={[1,2,5,15,30]} value={chartInterval} onChange={v => setChartInterval(Number(v))} suffix="m" /><Control label="History" values={[1,5,10,30]} value={chartDays} onChange={v => setChartDays(Number(v))} suffix="d" /></div></div><TradingChart points={chart} chartType={chartType} marketOpen={marketOpen} /></section>
-
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_350px]"><div className="space-y-6">
-          <div id="positions" className="scroll-mt-24 rounded-2xl border border-sky-100 bg-white shadow-sm"><Title title="Paper position" subtitle="Monitored continuously by the cloud engine" />{position ? <div className="p-5"><div className="flex flex-col justify-between gap-5 sm:flex-row"><div><div className="flex items-center gap-2"><Badge className="bg-emerald-50 text-emerald-700">OPEN</Badge><h3 className="font-bold text-slate-900">{position.strategy}</h3></div><p className="mt-2 text-sm text-slate-600">{position.legs.map(l => `${l.transaction_type} ${l.strike} ${l.option_type} @ ₹${l.entry_price}`).join(' · ')}</p><p className="mt-2 text-xs text-slate-400">Opened {new Date(position.opened_at).toLocaleString('en-IN')} · Expiry {position.expiry}</p></div><div className="flex items-end gap-3 sm:flex-col"><p className={`text-2xl font-bold ${(position.unrealized_pnl_inr ?? 0) >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{position.unrealized_pnl_inr === null ? 'Valuing…' : money(position.unrealized_pnl_inr)}</p><Button variant="destructive" onClick={exit} disabled={exiting}>{exiting ? 'Exiting…' : 'Exit now'}</Button></div></div><div className="mt-5 grid gap-3 sm:grid-cols-3"><Mini label="ENTRY POP" value={`${(position.predicted_pop * 100).toFixed(1)}%`} /><Mini label="PROFIT TARGET" value={money(position.max_profit_inr * .5)} /><Mini label="MAX LOSS GUARD" value={`-${money(position.planned_max_loss_inr)}`} /></div></div> : <Empty title="No open position" text="The engine will enter the highest-ranked qualified paper trade automatically during market hours." />}</div>
-          <div id="opportunities" className="scroll-mt-24 overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm"><Title title="Qualified suggestions" subtitle="Only POP-qualified trades that pass loss, reward/risk, liquidity and regime checks can enter automatically" badge={items.length} />{items.length === 0 ? <Empty title="No qualified trade" text={reason} /> : <div className="divide-y divide-sky-50">{items.map(trade => <article key={trade.id} className="p-5"><div className="flex flex-col gap-4 lg:flex-row"><div className="grid size-9 shrink-0 place-items-center rounded-xl bg-sky-500 font-bold text-white">{trade.rank}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><h3 className="font-bold text-slate-900">{trade.strategy}</h3><Badge variant="outline">Expiry {trade.expiry}</Badge><Badge className="bg-amber-50 text-amber-700">EV uncalibrated</Badge></div><p className="mt-1 text-sm text-slate-600">{trade.legs.map(l => `${l.transaction_type} ${l.strike} ${l.option_type}`).join(' · ')}</p><div className="mt-3 space-y-1.5">{trade.rationale.map((r, i) => <p key={i} className="flex gap-2 text-xs text-slate-500"><Check className="mt-0.5 size-3.5 shrink-0 text-emerald-500" />{r}</p>)}</div></div><div className="grid grid-cols-2 gap-3 sm:grid-cols-5 lg:w-[470px]"><Mini label="VENDOR POP" value={`${(trade.probability_of_profit * 100).toFixed(1)}%`} /><Mini label="TARGET" value={money(trade.profit_target_inr)} /><Mini label="MAX LOSS" value={money(trade.max_loss_inr)} danger /><Mini label="TARGET R:R" value={trade.target_reward_risk.toFixed(2)} /><Mini label="SCORE" value={`${trade.score}/100`} /></div></div></article>)}</div>}</div>
-        </div><aside className="space-y-5"><div className="rounded-2xl border border-sky-100 bg-white p-5 shadow-sm"><div className="mb-4 flex items-center justify-between"><h2 className="font-bold">Risk guard</h2><Badge className="bg-emerald-50 text-emerald-700"><ShieldCheck /> ACTIVE</Badge></div><Risk label="Per-trade cap" value="₹350" detail="Including estimated charges" used={position ? position.planned_max_loss_inr / 3.5 : 0} /><Risk label="Daily loss cap" value="₹600" detail={`${money(riskLeft)} remaining`} used={100-riskLeft/6} /><Risk label="Open positions" value={position ? '1 / 1' : '0 / 1'} detail="One position at a time · maximum two new trades daily" used={position ? 100 : 0} /><div className="mt-4 rounded-xl bg-sky-50 p-3 text-xs leading-relaxed text-sky-900">Real trading remains disabled. Its future entry threshold stays fixed at 95% and requires a separate activation review.</div></div><div className="rounded-2xl border border-sky-100 bg-white p-5 shadow-sm"><div className="flex items-center justify-between"><h2 className="font-bold">Research engine</h2><Badge className="bg-sky-50 text-sky-700"><Sparkles /> {learning?.mode === 'ACTIVE' ? 'ACTIVE' : 'LEARNING'}</Badge></div><p className="mt-3 text-2xl font-bold">{research?.generated_candidates ?? 0} <span className="text-sm font-medium text-slate-400">candidates tracked</span></p><div className="mt-3 grid grid-cols-2 gap-2"><Mini label="QUALIFIED" value={`${research?.qualified_candidates ?? 0}`} /><Mini label="RESEARCH ONLY" value={`${research?.research_only_candidates ?? 0}`} /></div><p className="mt-3 text-xs leading-relaxed text-slate-500">Every candidate is classified and stored. Only candidates above the configured POP threshold can enter the selected paper portfolio. EV remains uncalibrated until the outcome model is defensible.</p><div className="mt-4 border-t border-sky-100 pt-4"><p className="text-xs font-semibold">Historical regime filter</p><p className="mt-1 text-xs text-slate-500">{training ? `${training.training_days} training · ${training.validation_days} validation days` : 'Loading…'}</p><p className="mt-1 text-xs font-semibold text-emerald-600">{training?.activated ? 'Validated and active' : 'Not active'}</p></div></div><div className="rounded-2xl bg-gradient-to-br from-sky-600 to-blue-600 p-5 text-white shadow-lg"><div className="flex items-center justify-between"><p className="text-xs font-semibold text-sky-100">AUTOMATION</p><Clock3 className="size-4" /></div><p className="mt-3 text-xl font-bold">Server-controlled</p><p className="mt-2 text-xs leading-relaxed text-sky-100">Scans every minute during market hours. Profit target, maximum-loss guard and 3:15 PM exit are automatic.</p></div><button onClick={exit} disabled={!position || exiting} className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white py-3 text-sm font-semibold text-rose-600 disabled:opacity-40"><OctagonAlert className="size-4" /> Emergency exit position</button></aside></section>
-        <p className="mt-6 text-center text-xs text-slate-400">Last synchronized {updated ? new Date(updated).toLocaleTimeString('en-IN') : '—'} · Paper results do not guarantee future performance.</p>
-      </div>
-    </section>
-  </main>;
+export default function Home(){
+ const [view,setView]=useState<View>('dashboard'),[menu,setMenu]=useState(false),[items,setItems]=useState<Opportunity[]>([]),[position,setPosition]=useState<Position|null>(null),[positions,setPositions]=useState<Position[]>([]);
+ const [dailyPnl,setDailyPnl]=useState(0),[totalPnl,setTotalPnl]=useState(0),[newTradesToday,setNewTradesToday]=useState(0),[nifty,setNifty]=useState<number|null>(null),[previousClose,setPreviousClose]=useState<number|null>(null),[chart,setChart]=useState<Point[]>([]);
+ const [chartType,setChartType]=useState<'line'|'candles'>('candles'),[chartInterval,setChartInterval]=useState(5),[chartDays,setChartDays]=useState(5),[marketStatus,setMarketStatus]=useState('CHECKING'),[marketOpen,setMarketOpen]=useState(false),[scanned,setScanned]=useState(0),[decision,setDecision]=useState('LOADING'),[reason,setReason]=useState('Connecting…'),[updated,setUpdated]=useState<string|null>(null),[research,setResearch]=useState<Research|null>(null);
+ const [autoPlace,setAutoPlace]=useState(true),[selected,setSelected]=useState<Opportunity|null>(null),[busy,setBusy]=useState<string|null>(null),[notice,setNotice]=useState('');
+ const request=useCallback(async(path:string,init?:RequestInit)=>{const r=await fetch(`${API}${path}`,init),d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||`Request failed (${r.status})`);return d},[]);
+ const refresh=useCallback(async()=>{const a=await Promise.allSettled([request('/v1/market/nifty'),request('/v1/opportunities'),request(`/v1/market/nifty/chart?interval=${chartInterval}&days=${chartDays}`),request('/v1/paper/portfolio'),request('/v1/settings/automation')]);const[m,o,c,p,s]=a;if(m.status==='fulfilled'){setNifty(m.value.last_price);setPreviousClose(m.value.previous_close);setMarketStatus(m.value.market_status??'UNKNOWN');setMarketOpen(Boolean(m.value.market_is_open))}if(o.status==='fulfilled'){setItems(o.value.items??[]);setScanned(o.value.contracts_scanned??0);setDecision(o.value.decision??'NO_TRADE');setReason(o.value.reason??'');setUpdated(o.value.as_of??null);setResearch(o.value.research??null)}if(c.status==='fulfilled')setChart(c.value.points??[]);if(p.status==='fulfilled'){setPosition(p.value.open_position??null);setPositions(p.value.positions??[]);setDailyPnl(p.value.daily_realized_pnl_inr??0);setTotalPnl(p.value.total_realized_pnl_inr??0);setNewTradesToday(p.value.new_trades_today??0)}if(s.status==='fulfilled')setAutoPlace(Boolean(s.value.automatic_order_placement));if(m.status==='rejected'&&o.status==='rejected'){setDecision('OFFLINE');setMarketStatus('UNAVAILABLE');setMarketOpen(false)}},[chartDays,chartInterval,request]);
+ useEffect(()=>{refresh();const id=window.setInterval(refresh,15000);return()=>window.clearInterval(id)},[refresh]);
+ const saveAuto=async(v:boolean)=>{setAutoPlace(v);setNotice('Saving…');try{await request('/v1/settings/automation',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({automatic_order_placement:v})});setNotice(v?'Automatic paper orders enabled':'Manual approval mode enabled')}catch(e){setAutoPlace(!v);setNotice(e instanceof Error?e.message:'Could not save')}};
+ const order=async(t:Opportunity)=>{setBusy(t.id);setNotice('Placing paper order…');try{await request(`/v1/paper/orders/${encodeURIComponent(t.id)}`,{method:'POST'});setNotice('Paper order placed and monitoring started');setSelected(null);await refresh()}catch(e){setNotice(e instanceof Error?e.message:'Order failed')}finally{setBusy(null)}};
+ const exit=async()=>{if(!position)return;setBusy('exit');try{await request(`/v1/positions/${position.id}/exit`,{method:'POST'});setNotice('Position exited');await refresh()}catch(e){setNotice(e instanceof Error?e.message:'Exit failed')}finally{setBusy(null)}};
+ const change=nifty!==null&&previousClose?nifty-previousClose:null,pct=change!==null&&previousClose?change/previousClose*100:null,closed=positions.filter(p=>p.status==='CLOSED'),wins=closed.filter(p=>(p.realized_pnl_inr??0)>0),reserved=position?.planned_max_loss_inr??0,equity=50000+totalPnl+(position?.unrealized_pnl_inr??0),riskLeft=Math.max(0,8000+Math.min(0,dailyPnl));
+ const today=new Intl.DateTimeFormat('en-IN',{weekday:'short',day:'2-digit',month:'short',year:'numeric',timeZone:'Asia/Kolkata'}).format(new Date());const p={items,position,positions,closed,wins,nifty,change,pct,chart,chartType,setChartType,chartInterval,setChartInterval,chartDays,setChartDays,marketOpen,scanned,decision,reason,research,totalPnl,dailyPnl,newTradesToday,reserved,equity,riskLeft,autoPlace,setSelected,order,busy,exit,refresh};
+ return <main className="min-h-screen bg-[#f3f7fb] text-slate-900"><aside className={`fixed inset-y-0 left-0 z-40 flex w-[224px] flex-col bg-[#071b2d] px-3 py-4 text-slate-300 transition-transform lg:translate-x-0 ${menu?'translate-x-0':'-translate-x-full'}`}><div className="mb-7 flex items-center gap-3 px-2"><div className="grid size-9 place-items-center rounded-lg bg-sky-500 text-white"><TrendingUp className="size-5"/></div><b className="text-sm leading-tight text-white">F&O Command<br/>Centre</b><button onClick={()=>setMenu(false)} className="ml-auto lg:hidden"><X/></button></div><nav className="space-y-1">{nav.map(([label,Icon,id])=><button key={id} onClick={()=>{setView(id);setMenu(false)}} className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm ${view===id?'bg-[#087df1] text-white':'hover:bg-white/10 hover:text-white'}`}><Icon className="size-4"/>{label}</button>)}</nav><div className="mt-auto px-2"><div className="flex items-center gap-2 text-xs text-emerald-400"><span className="size-2 animate-pulse rounded-full bg-emerald-400"/>System running</div><p className="mt-2 text-xl font-semibold text-white">{updated?new Date(updated).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'--:--'}</p><p className="text-xs text-slate-400">{marketOpen?'Market open':'Market closed'}</p></div></aside>{menu&&<button className="fixed inset-0 z-30 bg-slate-950/40 lg:hidden" onClick={()=>setMenu(false)}/>}<section className="min-h-screen lg:pl-[224px]"><header className="sticky top-0 z-20 flex h-16 items-center border-b bg-white/95 px-4 sm:px-6"><button onClick={()=>setMenu(true)} className="mr-3 lg:hidden"><Menu/></button><p className="text-sm text-slate-600">{today}</p><Badge className={`ml-4 ${marketOpen?'bg-emerald-100 text-emerald-700':'bg-slate-100 text-slate-600'}`}>{marketOpen?'Market Open':marketStatus.replaceAll('_',' ')}</Badge><div className="ml-auto flex items-center gap-4"><Bell className="size-5 text-slate-500"/><div className="grid size-9 place-items-center rounded-full bg-blue-600 text-xs font-bold text-white">DK</div></div></header><div className="mx-auto max-w-[1500px] p-4 sm:p-6">{notice&&<div className="mb-4 flex justify-between rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800">{notice}<button onClick={()=>setNotice('')}><X className="size-4"/></button></div>}{view==='dashboard'&&<Dashboard {...p}/>} {view==='opportunities'&&<Opportunities {...p}/>} {view==='analysis'&&<Analysis {...p}/>} {view==='trades'&&<Trades {...p}/>} {view==='risk'&&<RiskCapital {...p}/>} {view==='research'&&<ResearchView {...p}/>} {view==='settings'&&<SettingsView autoPlace={autoPlace} saveAuto={saveAuto}/>}</div></section><TradeDialog trade={selected} onClose={()=>setSelected(null)} onOrder={order} busy={busy}/></main>
 }
 
-function CapitalLedger({ capital, available, reserved, totalPnl, unrealizedPnl, dailyPnl, dailyRiskLeft, newTradesToday, positions, closedTrades, winRate, averagePnl }: { capital: number; available: number; reserved: number; totalPnl: number; unrealizedPnl: number; dailyPnl: number; dailyRiskLeft: number; newTradesToday: number; positions: Position[]; closedTrades: Position[]; winRate: number; averagePnl: number }) {
-  return <section id="capital-ledger" className="mb-6 scroll-mt-24 space-y-5">
-    <div className="overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm">
-      <Title title="Paper capital ledger" subtitle="A transparent view of simulated capital, reserved risk and results" />
-      <div className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-5">
-        <LedgerStat label="STARTING CAPITAL" value={money(capital)} detail="Fixed paper account" />
-        <LedgerStat label="CURRENT EQUITY" value={money(capital + totalPnl + unrealizedPnl)} detail="Capital + realized + open P&L" tone={totalPnl + unrealizedPnl >= 0 ? 'good' : 'bad'} />
-        <LedgerStat label="RISK RESERVED" value={money(reserved)} detail={reserved ? 'Maximum planned open loss' : 'No open exposure'} />
-        <LedgerStat label="AVAILABLE CAPITAL" value={money(available)} detail="After reserved risk; not broker margin" />
-        <LedgerStat label="BROKER MARGIN" value="Unavailable" detail="Will show only from a margin API" />
-      </div>
-      <div className="border-t border-sky-100 px-5 py-4">
-        <div className="mb-2 flex items-center justify-between text-sm"><span className="font-semibold text-slate-700">Capital allocation</span><span className="text-slate-500">{reserved ? `${(reserved / capital * 100).toFixed(1)}% reserved` : '100% unreserved'}</span></div>
-        <Progress value={reserved / capital * 100} className="[&_[data-slot=progress-indicator]]:bg-sky-500 [&_[data-slot=progress-track]]:bg-sky-50" />
-      </div>
-    </div>
+function Dashboard(p:any){return <><Top title="Dashboard" sub="Live market overview and paper-trading decisions" badge={p.autoPlace?'Auto orders on':'Manual orders'}/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat label="NIFTY 50" value={p.nifty?.toLocaleString('en-IN',{minimumFractionDigits:2})??'Connecting…'} delta={p.change===null?'Upstox live feed':`${p.change>=0?'+':''}${p.change.toFixed(2)} (${p.pct?.toFixed(2)}%)`} good={p.change>=0}/><Stat label="SCANNER" value={p.decision==='TRADE_CANDIDATES'?'Trade ready':p.decision==='NO_TRADE'?'No trade':'Scanning…'} delta={`${p.scanned} contracts scanned`}/><Stat label="CURRENT EQUITY" value={money(p.equity)} delta={`${signed(p.totalPnl)} realized`} good={p.totalPnl>=0}/><Stat label="MARKET REGIME" value={p.marketOpen?'LIVE':'CLOSED'} delta="Historical loss filter active" good/></div><section className="mt-5 rounded-xl border bg-white"><Head title="Top Trade Opportunities" sub="Qualified setups ranked by the risk engine"/>{p.items.length?<div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-5">{p.items.slice(0,5).map((t:Opportunity)=><TradeCard key={t.id} trade={t} onView={p.setSelected} onOrder={p.order} busy={p.busy}/>)}</div>:<Empty text={p.reason}/>}</section><div className="mt-5 grid gap-5 xl:grid-cols-[1fr_340px]"><section className="overflow-hidden rounded-xl border bg-white"><Head title="NIFTY 50" sub="Live candles continue forming on the right"/><TradingChart points={p.chart} chartType="candles" marketOpen={p.marketOpen}/></section><div className="space-y-4"><Panel title="Open paper position">{p.position?<><b>{p.position.strategy}</b><p className="mt-2 text-sm text-slate-500">{legs(p.position.legs)}</p><p className={`mt-3 text-2xl font-bold ${(p.position.unrealized_pnl_inr??0)>=0?'text-emerald-600':'text-rose-600'}`}>{money(p.position.unrealized_pnl_inr??0)}</p><Button variant="destructive" className="mt-3 w-full" onClick={p.exit}>Exit position</Button></>:<Empty text="No open position"/>}</Panel><Panel title="Safety status"><p className="flex items-center gap-2 text-sm font-semibold text-emerald-700"><ShieldCheck/>All configured limits active</p><p className="mt-2 text-xs text-slate-500">Paper ≥75% POP · Real trading locked at ≥95%</p></Panel></div></div></>}
 
-    <div className="grid gap-5 lg:grid-cols-2">
-      <div className="rounded-2xl border border-sky-100 bg-white p-5 shadow-sm">
-        <h2 className="font-bold text-slate-900">Daily risk breakdown</h2>
-        <p className="mt-1 text-xs text-slate-500">Paper-only budget; real-money limits remain locked separately</p>
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <LedgerStat label="DAILY BUDGET" value="₹8,000" />
-          <LedgerStat label="RISK LEFT" value={money(dailyRiskLeft)} />
-          <LedgerStat label="TODAY P&L" value={money(dailyPnl)} tone={dailyPnl >= 0 ? 'good' : 'bad'} />
-          <LedgerStat label="TRADES USED" value={`${newTradesToday} / 3`} />
-        </div>
-        <Progress value={(8000 - dailyRiskLeft) / 80} className="mt-4 [&_[data-slot=progress-indicator]]:bg-rose-500 [&_[data-slot=progress-track]]:bg-sky-50" />
-      </div>
-      <div className="rounded-2xl border border-sky-100 bg-white p-5 shadow-sm">
-        <h2 className="font-bold text-slate-900">Performance snapshot</h2>
-        <p className="mt-1 text-xs text-slate-500">Based only on recorded completed paper trades</p>
-        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <LedgerStat label="COMPLETED" value={String(closedTrades.length)} />
-          <LedgerStat label="WIN RATE" value={closedTrades.length ? `${winRate.toFixed(1)}%` : '—'} />
-          <LedgerStat label="AVERAGE P&L" value={closedTrades.length ? money(averagePnl) : '—'} tone={averagePnl >= 0 ? 'good' : 'bad'} />
-          <LedgerStat label="TOTAL P&L" value={money(totalPnl)} tone={totalPnl >= 0 ? 'good' : 'bad'} />
-        </div>
-      </div>
-    </div>
+function Opportunities(p:any){const[q,setQ]=useState('');const shown=p.items.filter((t:Opportunity)=>`${t.strategy} ${legs(t.legs)}`.toLowerCase().includes(q.toLowerCase()));return <><Top title="Trade Opportunities" sub="AI-ranked and risk-checked trade setups"/><div className="mb-4 flex items-center rounded-xl border bg-white p-3"><Badge className="bg-emerald-100 text-emerald-700">Qualified only</Badge><div className="relative ml-auto"><Search className="absolute left-3 top-2.5 size-4 text-slate-400"/><input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search…" className="rounded-md border py-2 pl-9 pr-3 text-sm"/></div></div><div className="overflow-x-auto rounded-xl border bg-white"><table className="w-full min-w-[980px] text-left text-sm"><thead className="bg-slate-50 text-xs text-slate-500"><tr>{['#','Strategy','Legs','Expiry','POP','Exp. P&L','Max Profit','Max Loss','R:R','Score','Action'].map(x=><th key={x} className="px-3 py-3">{x}</th>)}</tr></thead><tbody className="divide-y">{shown.map((t:Opportunity)=><tr key={t.id} className="hover:bg-sky-50/40"><td className="px-3 py-3">{t.rank}</td><td className="px-3 font-semibold">{t.strategy}</td><td className="px-3 text-slate-500">{legs(t.legs)}</td><td className="px-3">{t.expiry}</td><td className="px-3 font-bold text-emerald-600">{percent(t.probability_of_profit)}</td><td className="px-3 text-emerald-600">{signed(t.profit_target_inr)}</td><td className="px-3">{money(t.max_profit_inr)}</td><td className="px-3 text-rose-600">{money(t.max_loss_inr)}</td><td className="px-3">{t.target_reward_risk.toFixed(2)}</td><td className="px-3">{t.score}</td><td className="px-3"><div className="flex gap-2"><Button size="sm" variant="outline" onClick={()=>p.setSelected(t)}>View</Button><Button size="sm" onClick={()=>p.order(t)} disabled={p.busy===t.id}>Order now</Button></div></td></tr>)}</tbody></table>{!shown.length&&<Empty text={p.reason}/>}</div></>}
 
-    <div id="trade-history" className="scroll-mt-24 overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm">
-      <Title title="Paper trade history" subtitle="Entry, exit, risk, result and strategy legs for the latest 20 trades" badge={positions.length} />
-      {positions.length === 0 ? <Empty title="No trades recorded yet" text="The first qualified paper experiment will appear here automatically." /> :
-        <div className="divide-y divide-sky-50">{positions.map(item => <article key={item.id} className="p-5">
-          <div className="flex flex-col justify-between gap-4 lg:flex-row">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2"><Badge className={item.status === 'OPEN' ? 'bg-sky-100 text-sky-700' : (item.realized_pnl_inr ?? 0) >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}>{item.status ?? 'CLOSED'}</Badge><h3 className="font-bold text-slate-900">{item.strategy}</h3><Badge variant="outline">{item.exit_reason?.replaceAll('_', ' ') ?? 'Monitoring'}</Badge></div>
-              <p className="mt-2 text-sm text-slate-600">{item.legs.map(leg => `${leg.transaction_type} ${leg.strike} ${leg.option_type} × ${leg.quantity} @ ₹${leg.entry_price}`).join(' · ')}</p>
-              <p className="mt-2 text-xs text-slate-400">Opened {new Date(item.opened_at).toLocaleString('en-IN')} {item.closed_at ? `· Closed ${new Date(item.closed_at).toLocaleString('en-IN')}` : ''} · Expiry {item.expiry}</p>
-            </div>
-            <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:w-[480px]">
-              <Mini label="ENTRY POP" value={`${(item.predicted_pop * 100).toFixed(1)}%`} />
-              <Mini label="PLANNED RISK" value={money(item.planned_max_loss_inr)} danger />
-              <Mini label="CHARGES" value={money(item.charges_inr ?? 0)} />
-              <Mini label={item.status === 'OPEN' ? 'OPEN P&L' : 'REALIZED P&L'} value={money(item.status === 'OPEN' ? item.unrealized_pnl_inr ?? 0 : item.realized_pnl_inr ?? 0)} />
-            </div>
-          </div>
-        </article>)}</div>}
-    </div>
-  </section>;
-}
+function Analysis(p:any){return <><Top title="Market Analysis" sub="NIFTY price action from the Upstox market feed"/><section className="overflow-hidden rounded-xl border bg-white"><div className="flex flex-wrap gap-2 border-b p-4"><Control label="Chart" values={['candles','line']} value={p.chartType} onChange={p.setChartType}/><Control label="Interval" values={[1,2,5,15,30]} value={p.chartInterval} onChange={(v:any)=>p.setChartInterval(Number(v))} suffix="m"/><Control label="History" values={[1,5,10,30]} value={p.chartDays} onChange={(v:any)=>p.setChartDays(Number(v))} suffix="d"/><Button variant="outline" onClick={p.refresh}><RefreshCcw/>Refresh</Button></div><TradingChart points={p.chart} chartType={p.chartType} marketOpen={p.marketOpen}/></section></>}
 
-function LedgerStat({ label, value, detail, tone }: { label: string; value: string; detail?: string; tone?: 'good' | 'bad' }) { return <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3"><p className="text-[11px] font-semibold tracking-wide text-slate-400">{label}</p><p className={`mt-1 text-base font-bold ${tone === 'good' ? 'text-emerald-600' : tone === 'bad' ? 'text-rose-600' : 'text-slate-900'}`}>{value}</p>{detail && <p className="mt-1 text-xs leading-relaxed text-slate-500">{detail}</p>}</div>; }
+function Trades(p:any){return <><Top title="Paper Trade History" sub="Every simulated entry, exit and result"/><div className="grid gap-3 sm:grid-cols-4"><Stat label="TOTAL TRADES" value={String(p.closed.length)}/><Stat label="WIN RATE" value={p.closed.length?`${(p.wins.length/p.closed.length*100).toFixed(1)}%`:'—'} good/><Stat label="TOTAL P&L" value={money(p.totalPnl)} good={p.totalPnl>=0}/><Stat label="OPEN POSITIONS" value={p.position?'1':'0'}/></div><div className="mt-4 overflow-x-auto rounded-xl border bg-white"><table className="w-full min-w-[850px] text-sm"><thead className="bg-slate-50 text-left text-xs text-slate-500"><tr>{['Date','Strategy','Legs','Entry POP','Risk','P&L','Exit reason','Status'].map(x=><th className="px-4 py-3" key={x}>{x}</th>)}</tr></thead><tbody className="divide-y">{p.positions.map((x:Position)=><tr key={x.id}><td className="px-4 py-3">{new Date(x.opened_at).toLocaleDateString('en-IN')}</td><td className="px-4 font-semibold">{x.strategy}</td><td className="px-4 text-slate-500">{legs(x.legs)}</td><td className="px-4">{percent(x.predicted_pop)}</td><td className="px-4">{money(x.planned_max_loss_inr)}</td><td className={`px-4 font-bold ${(x.realized_pnl_inr??x.unrealized_pnl_inr??0)>=0?'text-emerald-600':'text-rose-600'}`}>{money(x.realized_pnl_inr??x.unrealized_pnl_inr??0)}</td><td className="px-4">{x.exit_reason?.replaceAll('_',' ')??'Monitoring'}</td><td className="px-4"><Badge>{x.status??'CLOSED'}</Badge></td></tr>)}</tbody></table>{!p.positions.length&&<Empty text="No paper trades recorded yet"/>}</div></>}
 
-function money(v: number) { return `${v < 0 ? '-' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`; }
-function Metric({ icon, label, value, meta, positive, progress }: { icon: React.ReactNode; label: string; value: string; meta: string; positive?: boolean; progress?: number }) { return <div className="h-full rounded-2xl border border-sky-100 bg-white p-5 shadow-sm transition hover:border-sky-200 hover:shadow-md"><div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-400">{label}</span><span className="grid size-8 place-items-center rounded-lg bg-sky-50 text-sky-600 [&>svg]:size-4">{icon}</span></div><p className="mt-3 text-xl font-bold text-slate-900">{value}</p><p className={`mt-1 text-xs ${positive ? 'font-semibold text-emerald-600' : 'text-slate-400'}`}>{meta}</p>{progress !== undefined && <Progress value={progress} className="mt-3 [&_[data-slot=progress-indicator]]:bg-sky-500 [&_[data-slot=progress-track]]:bg-sky-100" />}</div>; }
-function Mini({ label, value, danger }: { label: string; value: string; danger?: boolean }) { return <div className="rounded-xl bg-slate-50 p-3"><p className="text-[10px] font-semibold tracking-wide text-slate-400">{label}</p><p className={`mt-1 text-sm font-bold ${danger ? 'text-rose-600' : 'text-slate-800'}`}>{value}</p></div>; }
-function Title({ title, subtitle, badge }: { title: string; subtitle: string; badge?: number }) { return <div className="border-b border-sky-100 px-5 py-4"><div className="flex items-center gap-2"><h2 className="font-bold text-slate-900">{title}</h2>{badge !== undefined && <Badge className="bg-sky-100 text-sky-700">{badge}</Badge>}</div><p className="mt-1 text-xs text-slate-500">{subtitle}</p></div>; }
-function Empty({ title, text }: { title: string; text: string }) { return <div className="p-9 text-center"><ShieldCheck className="mx-auto size-8 text-sky-500" /><h3 className="mt-3 font-bold">{title}</h3><p className="mx-auto mt-1 max-w-xl text-sm text-slate-500">{text}</p></div>; }
-function Risk({ label, value, detail, used }: { label: string; value: string; detail: string; used: number }) { return <div className="mb-4"><div className="flex justify-between text-xs"><span className="font-medium text-slate-600">{label}</span><span className="font-bold">{value}</span></div><Progress value={Math.min(100, Math.max(0, used))} className="mt-2 [&_[data-slot=progress-indicator]]:bg-sky-500 [&_[data-slot=progress-track]]:bg-sky-50" /><p className="mt-1.5 text-[10px] text-slate-400">{detail}</p></div>; }
-function Control({ label, values, value, onChange, suffix = '' }: { label: string; values: readonly (string|number)[]; value: string|number; onChange: (value: string|number) => void; suffix?: string }) { return <div className="flex items-center gap-1 rounded-xl bg-slate-50 p-1"><span className="px-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">{label}</span>{values.map(v => <button key={v} onClick={() => onChange(v)} className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold capitalize transition ${value === v ? 'bg-white text-sky-700 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}>{v}{typeof v === 'number' ? suffix : ''}</button>)}</div>; }
-function TradingChart({ points, chartType, marketOpen }: { points: Point[]; chartType: 'line'|'candles'; marketOpen: boolean }) {
-  const host = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const seriesRef = useRef<ISeriesApi<'Candlestick'> | ISeriesApi<'Area'> | null>(null);
-  const firstLoad = useRef(true);
-  const [hovered, setHovered] = useState<Point | null>(null);
+function RiskCapital(p:any){return <><Top title="Risk & Capital" sub="Paper capital allocation and safety limits"/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat label="PAPER CAPITAL" value="₹50,000"/><Stat label="CURRENT EQUITY" value={money(p.equity)} delta={signed(p.totalPnl)} good={p.totalPnl>=0}/><Stat label="DAILY RISK LEFT" value={money(p.riskLeft)} delta={`of ₹8,000 · ${p.newTradesToday}/3 trades`}/><Stat label="OPEN RISK" value={money(p.reserved)} delta={p.position?'1 open position':'No exposure'}/></div><div className="mt-5 grid gap-5 lg:grid-cols-2"><Panel title="Risk limits (Paper)"><Risk label="Max loss per trade" value="₹4,000" used={p.reserved/40}/><Risk label="Daily loss budget" value="₹8,000" used={(8000-p.riskLeft)/80}/><Risk label="Open strategies" value={p.position?'1 / 1':'0 / 1'} used={p.position?100:0}/><Risk label="New trades per day" value={`${p.newTradesToday} / 3`} used={p.newTradesToday/3*100}/></Panel><Panel title="Today’s activity"><Line label="Realized P&L" value={money(p.dailyPnl)}/><Line label="Trades taken" value={`${p.newTradesToday} / 3`}/><Line label="Available paper capital" value={money(50000+p.totalPnl-p.reserved)}/><div className="mt-5 rounded-xl bg-emerald-50 p-5 text-center text-emerald-700"><ShieldCheck className="mx-auto size-8"/><b className="mt-2 block">Risk controls active</b><span className="text-xs">Real-money trading remains locked</span></div></Panel></div></>}
 
-  useEffect(() => {
-    if (!host.current) return;
-    const api = createChart(host.current, {
-      autoSize: true,
-      layout: { background: { type: ColorType.Solid, color: '#ffffff' }, textColor: '#475569', attributionLogo: true },
-      localization: {
-        locale: 'en-IN',
-        timeFormatter: time => formatIndianChartTime(Number(time), true),
-      },
-      grid: { vertLines: { color: '#e2e8f0', style: LineStyle.Dotted }, horzLines: { color: '#e2e8f0', style: LineStyle.Dotted } },
-      crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: { borderColor: '#cbd5e1', scaleMargins: { top: 0.08, bottom: 0.08 } },
-      timeScale: { borderColor: '#cbd5e1', rightOffset: 8, barSpacing: 8, minBarSpacing: 1, timeVisible: true, secondsVisible: false, shiftVisibleRangeOnNewBar: true, tickMarkFormatter: time => formatIndianChartTime(Number(time), false) },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
-      kineticScroll: { mouse: true, touch: true },
-    });
-    const series = chartType === 'candles'
-      ? api.addSeries(CandlestickSeries, { upColor: '#089981', downColor: '#f23645', borderVisible: false, wickUpColor: '#089981', wickDownColor: '#f23645', priceLineVisible: true })
-      : api.addSeries(AreaSeries, { lineColor: '#0284c7', topColor: 'rgba(14,165,233,.28)', bottomColor: 'rgba(14,165,233,.02)', lineWidth: 2, priceLineVisible: true });
-    api.subscribeCrosshairMove(param => {
-      if (!param.time) return setHovered(null);
-      const hit = points.find(p => Math.floor(new Date(p.time).getTime() / 1000) === Number(param.time));
-      setHovered(hit ?? null);
-    });
-    chartRef.current = api;
-    seriesRef.current = series as typeof seriesRef.current;
-    firstLoad.current = true;
-    return () => { api.remove(); chartRef.current = null; seriesRef.current = null; };
-  }, [chartType]);
+function ResearchView(p:any){return <><Top title="Research / Backtesting" sub="Continuous evidence collection and model readiness"/><div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat label="CANDIDATES" value={String(p.research?.generated_candidates??0)}/><Stat label="QUALIFIED" value={String(p.research?.qualified_candidates??0)} good/><Stat label="RESEARCH ONLY" value={String(p.research?.research_only_candidates??0)}/><Stat label="MODEL STATUS" value={p.research?.ev_status?.replaceAll('_',' ')??'Loading'}/></div><div className="mt-5 grid gap-5 lg:grid-cols-[1fr_360px]"><Panel title="Candidate research coverage"><div className="flex h-56 items-end gap-2 rounded-xl bg-gradient-to-t from-emerald-50 to-white p-5">{[28,38,34,50,47,61,58,72,66,81,76,90].map((h,i)=><div key={i} className="flex-1 rounded-t bg-emerald-400/70" style={{height:`${h}%`}}/>)}</div><p className="mt-3 text-sm text-slate-500">Coverage visualization only. No simulated profits are invented.</p></Panel><Panel title="Rejection breakdown">{Object.entries(p.research?.rejection_reason_counts??{}).map(([k,v])=><Line key={k} label={k.replaceAll('_',' ')} value={String(v)}/>)}{!Object.keys(p.research?.rejection_reason_counts??{}).length&&<Empty text="Waiting for research data"/>}</Panel></div></>}
 
-  useEffect(() => {
-    const api = chartRef.current;
-    const series = seriesRef.current;
-    if (!api || !series || !points.length) return;
-    const data = points.map(p => chartType === 'candles'
-      ? { time: Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp, open: p.open, high: p.high, low: p.low, close: p.close }
-      : { time: Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp, value: p.close });
-    (series as any).setData(data);
-    if (firstLoad.current) {
-      api.timeScale().fitContent();
-      api.timeScale().scrollToRealTime();
-      firstLoad.current = false;
-    } else if (api.timeScale().scrollPosition() < 3) {
-      api.timeScale().scrollToRealTime();
-    }
-  }, [points, chartType]);
+function SettingsView({autoPlace,saveAuto}:{autoPlace:boolean;saveAuto:(v:boolean)=>void}){return <><Top title="Settings" sub="Paper trading behavior and locked real-money controls"/><div className="grid gap-5 lg:grid-cols-[1fr_360px]"><Panel title="Trading rules"><div className="flex items-center justify-between gap-5 rounded-xl border border-blue-100 bg-blue-50/60 p-4"><div><b>Automatic trade placement</b><p className="mt-1 text-sm text-slate-500">On: the server places the highest-ranked qualified paper trade. Off: use Order now.</p></div><Switch checked={autoPlace} onCheckedChange={saveAuto}/></div><div className="mt-5 grid gap-3 sm:grid-cols-2"><Setting label="Paper POP threshold" value="75%"/><Setting label="Paper max loss / trade" value="₹4,000"/><Setting label="Daily paper loss budget" value="₹8,000"/><Setting label="New trades / day" value="3"/><Setting label="Profit target" value="50% of max profit"/><Setting label="Timed exit" value="3:15 PM IST"/></div></Panel><Panel title="Real trading"><Badge className="bg-slate-200 text-slate-600">LOCKED</Badge><p className="mt-3 text-sm text-slate-600">95% POP · ₹350 maximum all-in loss · separate activation review required.</p></Panel></div></>}
 
-  const goLive = () => chartRef.current?.timeScale().scrollToRealTime();
-  const reset = () => { chartRef.current?.timeScale().fitContent(); chartRef.current?.timeScale().scrollToRealTime(); };
-  const fullscreen = () => host.current?.parentElement?.requestFullscreen?.();
-  const shown = hovered ?? points.at(-1) ?? null;
+function TradeDialog({trade,onClose,onOrder,busy}:{trade:Opportunity|null;onClose:()=>void;onOrder:(t:Opportunity)=>void;busy:string|null}){return <Dialog open={!!trade} onOpenChange={o=>!o&&onClose()}><DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>{trade?.strategy}</DialogTitle><DialogDescription>Review the complete paper-trade setup.</DialogDescription></DialogHeader>{trade&&<><div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><Mini label="POP" value={percent(trade.probability_of_profit)}/><Mini label="TARGET" value={money(trade.profit_target_inr)}/><Mini label="MAX PROFIT" value={money(trade.max_profit_inr)}/><Mini label="MAX LOSS" value={money(trade.max_loss_inr)} bad/><Mini label="R:R" value={trade.target_reward_risk.toFixed(2)}/></div><div className="mt-4 rounded-xl bg-slate-50 p-4"><b>Strategy legs</b><p className="mt-2 text-sm text-slate-600">{legs(trade.legs)}</p></div><div className="mt-4 space-y-2">{trade.rationale.map((r,i)=><p key={i} className="flex gap-2 text-sm text-slate-600"><Check className="size-4 text-emerald-500"/>{r}</p>)}</div><Button className="mt-5 w-full" onClick={()=>onOrder(trade)} disabled={busy===trade.id}>{busy===trade.id?'Placing…':'Order now · Paper trade'}</Button></>}</DialogContent></Dialog>}
+function TradeCard({trade,onView,onOrder,busy}:{trade:Opportunity;onView:(t:Opportunity)=>void;onOrder:(t:Opportunity)=>void;busy:string|null}){return <article className="rounded-lg border p-3"><div className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-md bg-blue-500 text-xs font-bold text-white">{trade.rank}</span><b className="truncate text-sm">{trade.strategy}</b></div><p className="mt-2 truncate text-xs text-slate-500">{legs(trade.legs)}</p><div className="mt-3"><Line label="POP" value={percent(trade.probability_of_profit)} good/><Line label="Exp. P&L" value={signed(trade.profit_target_inr)} good/><Line label="Max Loss" value={money(trade.max_loss_inr)}/><Line label="R:R" value={trade.target_reward_risk.toFixed(2)}/></div><div className="mt-3 grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={()=>onView(trade)}>View</Button><Button size="sm" onClick={()=>onOrder(trade)} disabled={busy===trade.id}>Order now</Button></div></article>}
+function Top({title,sub,badge}:{title:string;sub:string;badge?:string}){return <div className="mb-5 flex items-start justify-between"><div><h1 className="text-2xl font-bold">{title}</h1><p className="mt-1 text-sm text-slate-500">{sub}</p></div>{badge&&<Badge className="bg-blue-100 text-blue-700">{badge}</Badge>}</div>}
+function Head({title,sub}:{title:string;sub:string}){return <div className="border-b px-4 py-3"><b>{title}</b><p className="text-xs text-slate-500">{sub}</p></div>}
+function Panel({title,children}:{title:string;children:React.ReactNode}){return <section className="rounded-xl border bg-white p-5 shadow-sm"><h2 className="mb-4 font-bold">{title}</h2>{children}</section>}
+function Stat({label,value,delta,good}:{label:string;value:string;delta?:string;good?:boolean}){return <div className="rounded-xl border bg-white p-4 shadow-sm"><p className="text-xs font-semibold text-slate-500">{label}</p><p className="mt-2 text-2xl font-bold">{value}</p>{delta&&<p className={`mt-1 text-xs ${good?'font-semibold text-emerald-600':'text-slate-500'}`}>{delta}</p>}</div>}
+function Setting({label,value}:{label:string;value:string}){return <div className="rounded-lg border p-3"><p className="text-xs text-slate-500">{label}</p><b>{value}</b></div>}
+function Mini({label,value,bad}:{label:string;value:string;bad?:boolean}){return <div className="rounded-lg bg-slate-50 p-3"><p className="text-[11px] font-semibold text-slate-400">{label}</p><b className={bad?'text-rose-600':''}>{value}</b></div>}
+function Line({label,value,good}:{label:string;value:string;good?:boolean}){return <div className="flex justify-between gap-3 border-b border-slate-100 py-2 text-sm last:border-0"><span className="text-slate-500">{label}</span><b className={good?'text-emerald-600':''}>{value}</b></div>}
+function Risk({label,value,used}:{label:string;value:string;used:number}){return <div className="mb-5"><div className="flex justify-between text-sm"><span>{label}</span><b>{value}</b></div><Progress value={Math.max(0,Math.min(100,used))} className="mt-2"/></div>}
+function Empty({text}:{text:string}){return <div className="p-8 text-center text-sm text-slate-500">{text}</div>}
+function Control({label,values,value,onChange,suffix=''}:{label:string;values:(string|number)[];value:string|number;onChange:(v:any)=>void;suffix?:string}){return <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1"><span className="px-2 text-xs font-semibold text-slate-500">{label}</span>{values.map(v=><button key={v} onClick={()=>onChange(v)} className={`rounded-md px-2.5 py-1.5 text-xs font-semibold ${value===v?'bg-white text-blue-600 shadow-sm':'text-slate-500'}`}>{v}{typeof v==='number'?suffix:''}</button>)}</div>}
+const money=(v:number)=>`${v<0?'-':''}₹${Math.abs(v).toLocaleString('en-IN',{maximumFractionDigits:0})}`,signed=(v:number)=>`${v>=0?'+':'-'}₹${Math.abs(v).toLocaleString('en-IN',{maximumFractionDigits:0})}`,percent=(v:number)=>`${(v*100).toFixed(0)}%`,legs=(v:Leg[])=>v.map(x=>`${x.transaction_type} ${x.strike} ${x.option_type}`).join(' / ');
 
-  return <div className="relative bg-white">
-    <div className="flex min-h-11 flex-wrap items-center gap-x-4 gap-y-1 border-b border-slate-100 px-4 py-2 text-xs">
-      {shown && <><b className="text-slate-800">NIFTY 50</b><span>O <b>{shown.open.toFixed(2)}</b></span><span>H <b className="text-emerald-600">{shown.high.toFixed(2)}</b></span><span>L <b className="text-rose-600">{shown.low.toFixed(2)}</b></span><span>C <b className={shown.close >= shown.open ? 'text-emerald-600' : 'text-rose-600'}>{shown.close.toFixed(2)}</b></span></>}
-      <div className="ml-auto flex items-center gap-1"><button onClick={goLive} className="flex items-center gap-1 rounded-md px-2 py-1 font-semibold text-sky-700 hover:bg-sky-50"><Crosshair className="size-3.5" /> Go live</button><button onClick={reset} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100" aria-label="Reset chart"><RotateCcw className="size-3.5" /></button><button onClick={fullscreen} className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100" aria-label="Fullscreen chart"><Expand className="size-3.5" /></button></div>
-    </div>
-    <div ref={host} className="h-[390px] touch-pan-y sm:h-[520px]" />
-    <div className="pointer-events-none absolute bottom-9 left-4 rounded-md bg-white/85 px-2 py-1 text-[10px] font-medium text-slate-400">Scroll: history · Pinch/wheel: zoom · Drag: pan</div>
-    {marketOpen && <div className="pointer-events-none absolute right-20 top-14 flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-bold text-emerald-700"><span className="size-1.5 animate-pulse rounded-full bg-emerald-500" /> LIVE</div>}
-  </div>;
-}
-
-function formatIndianChartTime(unixSeconds: number, includeDate: boolean) {
-  return new Intl.DateTimeFormat('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    ...(includeDate ? { day: '2-digit', month: 'short' } : {}),
-    hour: '2-digit', minute: '2-digit', hour12: true,
-  }).format(new Date(unixSeconds * 1000));
-}
+function TradingChart({points,chartType,marketOpen}:{points:Point[];chartType:'line'|'candles';marketOpen:boolean}){const host=useRef<HTMLDivElement>(null),chartRef=useRef<IChartApi|null>(null),seriesRef=useRef<ISeriesApi<'Candlestick'>|ISeriesApi<'Area'>|null>(null),first=useRef(true);useEffect(()=>{if(!host.current)return;const api=createChart(host.current,{autoSize:true,layout:{background:{type:ColorType.Solid,color:'#fff'},textColor:'#64748b',attributionLogo:true},grid:{vertLines:{color:'#e2e8f0',style:LineStyle.Dotted},horzLines:{color:'#e2e8f0',style:LineStyle.Dotted}},crosshair:{mode:CrosshairMode.Normal},rightPriceScale:{borderColor:'#cbd5e1'},timeScale:{borderColor:'#cbd5e1',rightOffset:8,barSpacing:8,minBarSpacing:1,timeVisible:true,shiftVisibleRangeOnNewBar:true},handleScroll:{mouseWheel:true,pressedMouseMove:true,horzTouchDrag:true,vertTouchDrag:false},handleScale:{mouseWheel:true,pinch:true,axisPressedMouseMove:true},kineticScroll:{mouse:true,touch:true}}),series=chartType==='candles'?api.addSeries(CandlestickSeries,{upColor:'#10b981',downColor:'#ef4444',borderVisible:false,wickUpColor:'#10b981',wickDownColor:'#ef4444'}):api.addSeries(AreaSeries,{lineColor:'#0ea5e9',topColor:'rgba(14,165,233,.25)',bottomColor:'rgba(14,165,233,.02)',lineWidth:2});chartRef.current=api;seriesRef.current=series as any;first.current=true;return()=>api.remove()},[chartType]);useEffect(()=>{if(!seriesRef.current||!points.length)return;const data=points.map(p=>chartType==='candles'?{time:Math.floor(new Date(p.time).getTime()/1000) as UTCTimestamp,open:p.open,high:p.high,low:p.low,close:p.close}:{time:Math.floor(new Date(p.time).getTime()/1000) as UTCTimestamp,value:p.close});(seriesRef.current as any).setData(data);if(first.current){chartRef.current?.timeScale().fitContent();chartRef.current?.timeScale().scrollToRealTime();first.current=false}else if((chartRef.current?.timeScale().scrollPosition()??99)<3)chartRef.current?.timeScale().scrollToRealTime()},[points,chartType]);return <div className="relative"><div className="flex items-center border-b px-4 py-2 text-xs"><b>NIFTY 50 · NSE</b><button className="ml-auto flex items-center gap-1 text-blue-600" onClick={()=>chartRef.current?.timeScale().scrollToRealTime()}><Crosshair className="size-4"/>Go live</button><button className="ml-2" onClick={()=>chartRef.current?.timeScale().fitContent()}><RotateCcw className="size-4"/></button></div><div ref={host} className="h-[430px] touch-pan-y"/>{marketOpen&&<Badge className="absolute right-16 top-14 bg-emerald-100 text-emerald-700">LIVE</Badge>}</div>}

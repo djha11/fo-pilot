@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://fo-pilot-risk-engine.basic-duck-9530.chatgpt.site'),
+  metadataBase: new URL('https://fo-pilot-risk-engine.siajha18.chatgpt.site'),
   title: 'F&O Pilot — Decision Engine',
   description: 'Risk-first NIFTY futures and options decision engine.',
   openGraph: {

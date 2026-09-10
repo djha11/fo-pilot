@@ -105,6 +105,36 @@ def initialise_database() -> bool:
             )
             """
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS engine_settings (
+                key TEXT PRIMARY KEY,
+                value JSONB NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        conn.commit()
+        return True
+
+
+def get_engine_setting(key: str, default=None):
+    with connection() as conn:
+        if conn is None:
+            return default
+        row = conn.execute("SELECT value FROM engine_settings WHERE key=%s", (key,)).fetchone()
+        return row[0] if row else default
+
+
+def set_engine_setting(key: str, value):
+    with connection() as conn:
+        if conn is None:
+            return False
+        conn.execute(
+            """INSERT INTO engine_settings (key, value) VALUES (%s, %s::jsonb)
+               ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()""",
+            (key, json.dumps(value)),
+        )
         conn.commit()
         return True
 
