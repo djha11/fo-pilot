@@ -218,7 +218,7 @@ def paper_trading_summary() -> dict:
     with connection() as conn:
         if conn is None:
             return {"positions": [], "daily_realized_pnl_inr": 0.0}
-        rows = conn.execute("SELECT * FROM paper_positions ORDER BY id DESC LIMIT 20").fetchall()
+        rows = conn.execute("SELECT * FROM paper_positions ORDER BY id DESC LIMIT 1000").fetchall()
         daily = conn.execute(
             """SELECT COALESCE(SUM(realized_pnl_inr), 0)
                FROM paper_positions WHERE status='CLOSED'

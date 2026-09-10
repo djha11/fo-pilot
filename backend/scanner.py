@@ -98,7 +98,8 @@ def _expiry_day(expiry: str) -> bool:
 
 def scan_vertical_spreads(
     chain: list[dict], lot_size: int = NIFTY_MARKET_LOT, minimum_pop: float = MIN_POP,
-    include_rejected: bool = False,
+    include_rejected: bool = False, minimum_target_reward_risk: float = PAPER_MIN_TARGET_REWARD_RISK,
+    minimum_expected_value: float = 0.0, expiry_day_minimum_pop: float = EXPIRY_DAY_MIN_POP,
 ) -> list[dict]:
     if not chain:
         return []
@@ -106,7 +107,7 @@ def scan_vertical_spreads(
     spot = _number(rows[0].get("underlying_spot_price"))
     expiry = str(rows[0].get("expiry") or "")
     is_expiry_day = _expiry_day(expiry)
-    min_pop = max(minimum_pop, EXPIRY_DAY_MIN_POP if is_expiry_day else minimum_pop)
+    min_pop = max(minimum_pop, expiry_day_minimum_pop if is_expiry_day else minimum_pop)
     candidates: list[Opportunity] = []
 
     for index in range(len(rows) - 1):
@@ -133,6 +134,7 @@ def scan_vertical_spreads(
                         "Bull Put Spread", expiry, is_expiry_day, pop, max_profit,
                         max_loss, spot, short_put, long_put, upper_strike,
                         lower_strike, "SELL", "BUY", lot_size, min_pop,
+                        minimum_target_reward_risk, minimum_expected_value,
                     )
                 )
 
@@ -152,6 +154,7 @@ def scan_vertical_spreads(
                         "Bear Call Spread", expiry, is_expiry_day, pop, max_profit,
                         max_loss, spot, short_call, long_call, lower_strike,
                         upper_strike, "SELL", "BUY", lot_size, min_pop,
+                        minimum_target_reward_risk, minimum_expected_value,
                     )
                 )
 
@@ -182,6 +185,8 @@ def _build(
     long_action: str,
     lot_size: int,
     minimum_pop: float,
+    minimum_target_reward_risk: float,
+    minimum_expected_value: float,
 ) -> Opportunity:
     reward_risk = max_profit / max(max_loss, 1)
     profit_target = max_profit * PROFIT_TARGET_RATIO
@@ -194,8 +199,8 @@ def _build(
         "POP": pop >= minimum_pop,
         "LIQUIDITY": _is_liquid(short_option) and _is_liquid(long_option),
         "MAX_LOSS": 0 < max_loss <= PAPER_MAX_LOSS_PER_TRADE_INR,
-        "REWARD_RISK": target_reward_risk >= PAPER_MIN_TARGET_REWARD_RISK,
-        "EV": expected_value > 0,
+        "REWARD_RISK": target_reward_risk >= minimum_target_reward_risk,
+        "EV": expected_value > minimum_expected_value,
         "REGIME": None,
         "DATA_QUALITY": True,
     }

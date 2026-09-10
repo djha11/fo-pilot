@@ -124,6 +124,42 @@ class AutomationSetting(BaseModel):
     automatic_order_placement: bool
 
 
+class PaperTradingSettings(BaseModel):
+    automatic_order_placement: bool
+    paper_minimum_probability_of_profit: float = Field(ge=0.50, le=0.99)
+    expiry_day_minimum_probability_of_profit: float = Field(ge=0.50, le=0.995)
+    minimum_target_reward_risk: float = Field(ge=0.0, le=5.0)
+    minimum_expected_value_inr: float = Field(ge=0.0, le=100000)
+    paper_max_loss_per_trade_inr: float = Field(gt=0, le=10000)
+    paper_max_daily_loss_inr: float = Field(gt=0, le=25000)
+    max_new_trades_per_day: int = Field(ge=1, le=20)
+    profit_target_ratio: float = Field(ge=0.10, le=1.0)
+    timed_exit: str = Field(pattern=r"^(09:(1[5-9]|[2-5][0-9])|1[0-4]:[0-5][0-9]|15:([0-2][0-9]))$")
+
+
+def paper_settings() -> dict:
+    defaults = {
+        "automatic_order_placement": True,
+        "paper_minimum_probability_of_profit": PAPER_MIN_PROBABILITY_OF_PROFIT,
+        "expiry_day_minimum_probability_of_profit": 0.97,
+        "minimum_target_reward_risk": PAPER_MIN_TARGET_REWARD_RISK,
+        "minimum_expected_value_inr": MIN_EXPECTED_VALUE,
+        "paper_max_loss_per_trade_inr": PAPER_MAX_LOSS_PER_TRADE_INR,
+        "paper_max_daily_loss_inr": PAPER_MAX_DAILY_LOSS_INR,
+        "max_new_trades_per_day": MAX_NEW_TRADES_PER_DAY,
+        "profit_target_ratio": PROFIT_TARGET_RATIO,
+        "timed_exit": "15:15",
+    }
+    saved = get_engine_setting("paper_trading_settings", {})
+    if isinstance(saved, dict):
+        defaults.update({key: saved[key] for key in defaults if key in saved})
+    # Compatibility with the earlier standalone automation toggle.
+    defaults["automatic_order_placement"] = bool(
+        get_engine_setting("automatic_order_placement", defaults["automatic_order_placement"])
+    )
+    return defaults
+
+
 @app.get("/health")
 def health():
     return {
@@ -136,31 +172,34 @@ def health():
 
 @app.get("/v1/risk-policy")
 def risk_policy():
+    configured = paper_settings()
     return {
         "capital_inr": CAPITAL_INR,
         "max_loss_per_trade_inr": MAX_LOSS_PER_TRADE,
-        "paper_max_loss_per_trade_inr": PAPER_MAX_LOSS_PER_TRADE_INR,
-        "paper_max_daily_loss_inr": PAPER_MAX_DAILY_LOSS_INR,
+        "paper_max_loss_per_trade_inr": configured["paper_max_loss_per_trade_inr"],
+        "paper_max_daily_loss_inr": configured["paper_max_daily_loss_inr"],
         "daily_loss_limit_inr": DAILY_LOSS_LIMIT,
         "minimum_probability_of_profit": MIN_PROBABILITY_OF_PROFIT,
-        "paper_minimum_probability_of_profit": PAPER_MIN_PROBABILITY_OF_PROFIT,
+        "paper_minimum_probability_of_profit": configured["paper_minimum_probability_of_profit"],
+        "expiry_day_minimum_probability_of_profit": configured["expiry_day_minimum_probability_of_profit"],
         "max_open_positions": MAX_OPEN_POSITIONS,
-        "max_new_trades_per_day": MAX_NEW_TRADES_PER_DAY,
+        "max_new_trades_per_day": configured["max_new_trades_per_day"],
         "minimum_target_reward_risk": MIN_TARGET_REWARD_RISK,
-        "paper_minimum_target_reward_risk": PAPER_MIN_TARGET_REWARD_RISK,
-        "minimum_expected_value": MIN_EXPECTED_VALUE,
-        "profit_target_ratio": PROFIT_TARGET_RATIO,
+        "paper_minimum_target_reward_risk": configured["minimum_target_reward_risk"],
+        "minimum_expected_value": configured["minimum_expected_value_inr"],
+        "profit_target_ratio": configured["profit_target_ratio"],
+        "timed_exit": configured["timed_exit"],
         "strategy_version": STRATEGY_VERSION,
         "model_version": MODEL_VERSION,
         "score_weights": EXPERIMENTAL_SCORE_WEIGHTS,
         "live_trading_enabled": False,
-        "automatic_order_placement": bool(get_engine_setting("automatic_order_placement", True)),
+        "automatic_order_placement": configured["automatic_order_placement"],
     }
 
 
 @app.get("/v1/settings/automation")
 def automation_setting():
-    return {"automatic_order_placement": bool(get_engine_setting("automatic_order_placement", True)), "mode": "PAPER_ONLY"}
+    return {**paper_settings(), "mode": "PAPER_ONLY"}
 
 
 @app.put("/v1/settings/automation")
@@ -168,6 +207,19 @@ def update_automation_setting(setting: AutomationSetting):
     if not set_engine_setting("automatic_order_placement", setting.automatic_order_placement):
         raise HTTPException(503, "Settings storage is unavailable")
     return {"saved": True, "automatic_order_placement": setting.automatic_order_placement, "mode": "PAPER_ONLY"}
+
+
+@app.put("/v1/settings/paper")
+def update_paper_settings(settings: PaperTradingSettings):
+    if settings.expiry_day_minimum_probability_of_profit < settings.paper_minimum_probability_of_profit:
+        raise HTTPException(422, "Expiry-day POP cannot be below the normal paper POP")
+    if settings.paper_max_loss_per_trade_inr > settings.paper_max_daily_loss_inr:
+        raise HTTPException(422, "Per-trade loss cannot exceed the daily loss budget")
+    payload = settings.model_dump()
+    if not set_engine_setting("paper_trading_settings", payload):
+        raise HTTPException(503, "Settings storage is unavailable")
+    set_engine_setting("automatic_order_placement", settings.automatic_order_placement)
+    return {"saved": True, **payload, "mode": "PAPER_ONLY"}
 
 
 @app.get("/v1/market/nifty")
@@ -229,6 +281,7 @@ async def nifty_chart(
 
 @app.get("/v1/opportunities")
 async def opportunities():
+    configured = paper_settings()
     expiries = ("current_week", "next_week")
     try:
         results = await asyncio.gather(
@@ -247,8 +300,11 @@ async def opportunities():
         research_candidates.extend(
             apply_learning(item, profiles)
             for item in scan_vertical_spreads(
-                chain, minimum_pop=PAPER_MIN_PROBABILITY_OF_PROFIT,
+                chain, minimum_pop=configured["paper_minimum_probability_of_profit"],
                 include_rejected=True,
+                minimum_target_reward_risk=configured["minimum_target_reward_risk"],
+                minimum_expected_value=configured["minimum_expected_value_inr"],
+                expiry_day_minimum_pop=configured["expiry_day_minimum_probability_of_profit"],
             )
         )
     research_candidates.sort(
@@ -299,13 +355,13 @@ async def opportunities():
         "contracts_scanned": scanned,
         "expiries_scanned": list(expiries),
         "risk_policy": {
-            "paper_minimum_probability_of_profit": PAPER_MIN_PROBABILITY_OF_PROFIT,
+            "paper_minimum_probability_of_profit": configured["paper_minimum_probability_of_profit"],
             "real_minimum_probability_of_profit": MIN_PROBABILITY_OF_PROFIT,
             "max_loss_per_trade_inr": MAX_LOSS_PER_TRADE,
-            "paper_max_loss_per_trade_inr": PAPER_MAX_LOSS_PER_TRADE_INR,
-            "paper_max_daily_loss_inr": PAPER_MAX_DAILY_LOSS_INR,
+            "paper_max_loss_per_trade_inr": configured["paper_max_loss_per_trade_inr"],
+            "paper_max_daily_loss_inr": configured["paper_max_daily_loss_inr"],
             "minimum_target_reward_risk": MIN_TARGET_REWARD_RISK,
-            "paper_minimum_target_reward_risk": PAPER_MIN_TARGET_REWARD_RISK,
+            "paper_minimum_target_reward_risk": configured["minimum_target_reward_risk"],
             "expected_value_status": "POSITIVE_PROXY_REQUIRED",
             "live_trading_enabled": False,
         },
@@ -367,7 +423,7 @@ async def paper_automation_cycle():
         if pnl is not None:
             maybe_exit(position, pnl)
         return
-    if bool(get_engine_setting("automatic_order_placement", True)):
+    if paper_settings()["automatic_order_placement"]:
         maybe_enter(scan["items"], market_open=True)
 
 
