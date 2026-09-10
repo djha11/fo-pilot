@@ -10,7 +10,7 @@ import { Progress } from '@/components/ui/progress';
 const API = 'https://michel-specially-hostel-tahoe.trycloudflare.com';
 type Leg = { transaction_type: string; strike: number; option_type: string; quantity: number; entry_price: number };
 type Opportunity = { id: string; rank: number; strategy: string; expiry: string; probability_of_profit: number; max_profit_inr: number; max_loss_inr: number; profit_target_inr: number; target_reward_risk: number; maximum_reward_risk: number; expected_value_status: string; score: number; legs: Leg[]; rationale: string[] };
-type Position = { id: number; strategy: string; expiry: string; predicted_pop: number; planned_max_loss_inr: number; max_profit_inr: number; unrealized_pnl_inr: number | null; opened_at: string; legs: Leg[]; rationale: string[] };
+type Position = { id: number; strategy: string; expiry: string; predicted_pop: number; planned_max_loss_inr: number; max_profit_inr: number; unrealized_pnl_inr: number | null; realized_pnl_inr?: number | null; charges_inr?: number; status?: string; exit_reason?: string | null; opened_at: string; closed_at?: string | null; legs: Leg[]; rationale: string[] };
 type Learning = { mode: string; completed_trades: number; profitable_trades: number; minimum_samples_per_group: number };
 type Training = { activated: boolean; training_days: number; validation_days: number };
 type Point = { time: string; open: number; high: number; low: number; close: number };
@@ -18,6 +18,7 @@ type Research = { generated_candidates: number; qualified_candidates: number; re
 
 const nav = [
   ['Overview', LayoutDashboard, 'overview'], ['Live chart', ChartNoAxesCombined, 'live-chart'],
+  ['Capital & risk', WalletCards, 'capital-ledger'], ['Trade history', Clock3, 'trade-history'],
   ['Opportunities', Sparkles, 'opportunities'], ['Positions', Activity, 'positions'],
 ] as const;
 
@@ -25,7 +26,10 @@ export default function Home() {
   const [menu, setMenu] = useState(false);
   const [items, setItems] = useState<Opportunity[]>([]);
   const [position, setPosition] = useState<Position | null>(null);
+  const [positions, setPositions] = useState<Position[]>([]);
   const [dailyPnl, setDailyPnl] = useState(0);
+  const [totalPnl, setTotalPnl] = useState(0);
+  const [newTradesToday, setNewTradesToday] = useState(0);
   const [nifty, setNifty] = useState<number | null>(null);
   const [previousClose, setPreviousClose] = useState<number | null>(null);
   const [chart, setChart] = useState<Point[]>([]);
@@ -73,7 +77,10 @@ export default function Home() {
     if (portfolioResult.status === 'fulfilled') {
       const portfolio = portfolioResult.value;
       setPosition(portfolio.open_position ?? null);
+      setPositions(portfolio.positions ?? []);
       setDailyPnl(portfolio.daily_realized_pnl_inr ?? 0);
+      setTotalPnl(portfolio.total_realized_pnl_inr ?? 0);
+      setNewTradesToday(portfolio.new_trades_today ?? 0);
     }
     if (marketResult.status === 'rejected' && scanResult.status === 'rejected') {
       setDecision('OFFLINE'); setMarketStatus('UNAVAILABLE'); setMarketOpen(false);
@@ -84,7 +91,15 @@ export default function Home() {
   useEffect(() => { refresh(); const timer = window.setInterval(refresh, 15000); return () => window.clearInterval(timer); }, [refresh]);
   const change = nifty !== null && previousClose ? nifty - previousClose : null;
   const changePct = change !== null && previousClose ? change / previousClose * 100 : null;
-  const riskLeft = Math.max(0, 600 + Math.min(0, dailyPnl));
+  const paperDailyRisk = 8000;
+  const riskLeft = Math.max(0, paperDailyRisk + Math.min(0, dailyPnl));
+  const reservedRisk = position?.planned_max_loss_inr ?? 0;
+  const unrealizedPnl = position?.unrealized_pnl_inr ?? 0;
+  const availableCapital = 50000 + totalPnl - reservedRisk;
+  const closedTrades = positions.filter(item => item.status === 'CLOSED');
+  const wins = closedTrades.filter(item => (item.realized_pnl_inr ?? 0) > 0).length;
+  const winRate = closedTrades.length ? wins / closedTrades.length * 100 : 0;
+  const averagePnl = closedTrades.length ? closedTrades.reduce((sum, item) => sum + (item.realized_pnl_inr ?? 0), 0) / closedTrades.length : 0;
   const today = new Intl.DateTimeFormat('en-IN', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Asia/Kolkata' }).format(new Date());
   const go = (id: string) => { document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' }); setMenu(false); };
   const exit = async () => { if (!position || exiting) return; setExiting(true); try { await fetch(`${API}/v1/positions/${position.id}/exit`, { method: 'POST' }); await refresh(); } finally { setExiting(false); } };
@@ -100,7 +115,9 @@ export default function Home() {
       <header className="sticky top-0 z-20 flex h-[72px] items-center border-b border-sky-100/80 bg-white/90 px-5 backdrop-blur-xl sm:px-8"><button className="mr-3 lg:hidden" onClick={() => setMenu(true)} aria-label="Open menu"><Menu className="size-5" /></button><div><h1 className="text-lg font-bold text-slate-900">F&O command centre</h1><p className="hidden text-xs text-slate-400 sm:block">{today} · Indian market</p></div><div className="ml-auto flex items-center gap-3"><div className={`flex items-center gap-2 rounded-full border px-3 py-1.5 ${marketOpen ? 'border-emerald-100 bg-emerald-50' : 'border-slate-200 bg-slate-50'}`}><span className={`size-2 rounded-full ${marketOpen ? 'animate-pulse bg-emerald-500' : 'bg-slate-400'}`} /><span className="text-xs font-semibold text-slate-600">{marketOpen ? 'Market open' : marketStatus === 'NORMAL_CLOSE' ? 'Market closed' : marketStatus.replaceAll('_', ' ').toLowerCase()}</span></div><Button variant="outline" size="icon" className="rounded-full border-sky-100"><Bell /></Button><div className="grid size-9 place-items-center rounded-full bg-sky-600 text-xs font-bold text-white">DK</div></div></header>
       <div id="overview" className="mx-auto max-w-[1500px] scroll-mt-24 p-5 sm:p-8">
         <section className="mb-6 flex flex-col gap-4 rounded-2xl border border-sky-100 bg-white p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-3"><div className="grid size-10 place-items-center rounded-xl bg-sky-100 text-sky-700"><RefreshCcw className="size-5" /></div><div><div className="flex items-center gap-2"><p className="text-sm font-bold text-slate-800">Automatic paper experiments</p><Badge className="bg-emerald-100 text-emerald-700">RUNNING</Badge></div><p className="mt-0.5 text-xs text-slate-500">Up to 3 sequential learning trades · no real money</p></div></div><div className="flex gap-2"><Badge variant="outline" className="border-sky-200 bg-sky-50 text-sky-700">PAPER ≥ 75%</Badge><Badge variant="outline" className="border-slate-200 bg-slate-50 text-slate-500">REAL ≥ 95% · ₹350 · LOCKED</Badge></div></section>
-        <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><button onClick={() => go('live-chart')} className="text-left"><Metric icon={<TrendingUp />} label="NIFTY 50 · OPEN CHART" value={nifty?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? 'Connecting…'} meta={change === null ? 'Upstox market feed' : `${change >= 0 ? '+' : ''}${change.toFixed(2)} · ${changePct?.toFixed(2)}%`} positive={change !== null && change >= 0} /></button><Metric icon={<Radio />} label="SCANNER DECISION" value={decision === 'TRADE_CANDIDATES' ? 'Candidates ready' : decision === 'NO_TRADE' ? 'No trade' : decision === 'OFFLINE' ? 'Offline' : 'Scanning…'} meta={`${scanned} contracts checked`} /><Metric icon={<WalletCards />} label="PAPER CAPITAL" value="₹50,000" meta={position ? '1 open position' : 'No open exposure'} /><Metric icon={<ShieldCheck />} label="DAILY RISK LEFT" value={`₹${riskLeft.toFixed(0)}`} meta={`Realized today: ${money(dailyPnl)}`} progress={riskLeft / 6} /></section>
+        <section className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><button onClick={() => go('live-chart')} className="text-left"><Metric icon={<TrendingUp />} label="NIFTY 50 · OPEN CHART" value={nifty?.toLocaleString('en-IN', { minimumFractionDigits: 2 }) ?? 'Connecting…'} meta={change === null ? 'Upstox market feed' : `${change >= 0 ? '+' : ''}${change.toFixed(2)} · ${changePct?.toFixed(2)}%`} positive={change !== null && change >= 0} /></button><Metric icon={<Radio />} label="SCANNER DECISION" value={decision === 'TRADE_CANDIDATES' ? 'Candidates ready' : decision === 'NO_TRADE' ? 'No trade' : decision === 'OFFLINE' ? 'Offline' : 'Scanning…'} meta={`${scanned} contracts checked`} /><button onClick={() => go('capital-ledger')} className="text-left"><Metric icon={<WalletCards />} label="PAPER CAPITAL · VIEW BREAKDOWN" value={money(50000 + totalPnl)} meta={reservedRisk ? `${money(reservedRisk)} risk reserved` : 'No capital reserved'} /></button><button onClick={() => go('capital-ledger')} className="text-left"><Metric icon={<ShieldCheck />} label="DAILY PAPER RISK · VIEW BREAKDOWN" value={money(riskLeft)} meta={`${newTradesToday}/3 trades · P&L ${money(dailyPnl)}`} progress={riskLeft / 80} /></button></section>
+
+        <CapitalLedger capital={50000} available={availableCapital} reserved={reservedRisk} totalPnl={totalPnl} unrealizedPnl={unrealizedPnl} dailyPnl={dailyPnl} dailyRiskLeft={riskLeft} newTradesToday={newTradesToday} positions={positions} closedTrades={closedTrades} winRate={winRate} averagePnl={averagePnl} />
 
         <section id="live-chart" className="mb-6 scroll-mt-24 overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm"><div className="border-b border-sky-100 px-5 py-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-slate-900">NIFTY 50 trading chart</h2><p className="mt-1 text-xs text-slate-500">Scroll to move through history · pinch or wheel to zoom · live candles form on the right</p></div><div className="flex items-center gap-2"><Badge className={marketOpen ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}>{marketOpen ? 'LIVE' : 'CLOSED'}</Badge><Button variant="outline" onClick={refresh}><RefreshCcw /> Refresh</Button></div></div><div className="mt-4 flex flex-wrap gap-2"><Control label="Chart" values={['candles','line']} value={chartType} onChange={v => setChartType(v as 'line'|'candles')} /><Control label="Interval" values={[1,2,5,15,30]} value={chartInterval} onChange={v => setChartInterval(Number(v))} suffix="m" /><Control label="History" values={[1,5,10,30]} value={chartDays} onChange={v => setChartDays(Number(v))} suffix="d" /></div></div><TradingChart points={chart} chartType={chartType} marketOpen={marketOpen} /></section>
 
@@ -113,6 +130,71 @@ export default function Home() {
     </section>
   </main>;
 }
+
+function CapitalLedger({ capital, available, reserved, totalPnl, unrealizedPnl, dailyPnl, dailyRiskLeft, newTradesToday, positions, closedTrades, winRate, averagePnl }: { capital: number; available: number; reserved: number; totalPnl: number; unrealizedPnl: number; dailyPnl: number; dailyRiskLeft: number; newTradesToday: number; positions: Position[]; closedTrades: Position[]; winRate: number; averagePnl: number }) {
+  return <section id="capital-ledger" className="mb-6 scroll-mt-24 space-y-5">
+    <div className="overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm">
+      <Title title="Paper capital ledger" subtitle="A transparent view of simulated capital, reserved risk and results" />
+      <div className="grid gap-3 p-5 sm:grid-cols-2 xl:grid-cols-5">
+        <LedgerStat label="STARTING CAPITAL" value={money(capital)} detail="Fixed paper account" />
+        <LedgerStat label="CURRENT EQUITY" value={money(capital + totalPnl + unrealizedPnl)} detail="Capital + realized + open P&L" tone={totalPnl + unrealizedPnl >= 0 ? 'good' : 'bad'} />
+        <LedgerStat label="RISK RESERVED" value={money(reserved)} detail={reserved ? 'Maximum planned open loss' : 'No open exposure'} />
+        <LedgerStat label="AVAILABLE CAPITAL" value={money(available)} detail="After reserved risk; not broker margin" />
+        <LedgerStat label="BROKER MARGIN" value="Unavailable" detail="Will show only from a margin API" />
+      </div>
+      <div className="border-t border-sky-100 px-5 py-4">
+        <div className="mb-2 flex items-center justify-between text-sm"><span className="font-semibold text-slate-700">Capital allocation</span><span className="text-slate-500">{reserved ? `${(reserved / capital * 100).toFixed(1)}% reserved` : '100% unreserved'}</span></div>
+        <Progress value={reserved / capital * 100} className="[&_[data-slot=progress-indicator]]:bg-sky-500 [&_[data-slot=progress-track]]:bg-sky-50" />
+      </div>
+    </div>
+
+    <div className="grid gap-5 lg:grid-cols-2">
+      <div className="rounded-2xl border border-sky-100 bg-white p-5 shadow-sm">
+        <h2 className="font-bold text-slate-900">Daily risk breakdown</h2>
+        <p className="mt-1 text-xs text-slate-500">Paper-only budget; real-money limits remain locked separately</p>
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <LedgerStat label="DAILY BUDGET" value="₹8,000" />
+          <LedgerStat label="RISK LEFT" value={money(dailyRiskLeft)} />
+          <LedgerStat label="TODAY P&L" value={money(dailyPnl)} tone={dailyPnl >= 0 ? 'good' : 'bad'} />
+          <LedgerStat label="TRADES USED" value={`${newTradesToday} / 3`} />
+        </div>
+        <Progress value={(8000 - dailyRiskLeft) / 80} className="mt-4 [&_[data-slot=progress-indicator]]:bg-rose-500 [&_[data-slot=progress-track]]:bg-sky-50" />
+      </div>
+      <div className="rounded-2xl border border-sky-100 bg-white p-5 shadow-sm">
+        <h2 className="font-bold text-slate-900">Performance snapshot</h2>
+        <p className="mt-1 text-xs text-slate-500">Based only on recorded completed paper trades</p>
+        <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <LedgerStat label="COMPLETED" value={String(closedTrades.length)} />
+          <LedgerStat label="WIN RATE" value={closedTrades.length ? `${winRate.toFixed(1)}%` : '—'} />
+          <LedgerStat label="AVERAGE P&L" value={closedTrades.length ? money(averagePnl) : '—'} tone={averagePnl >= 0 ? 'good' : 'bad'} />
+          <LedgerStat label="TOTAL P&L" value={money(totalPnl)} tone={totalPnl >= 0 ? 'good' : 'bad'} />
+        </div>
+      </div>
+    </div>
+
+    <div id="trade-history" className="scroll-mt-24 overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm">
+      <Title title="Paper trade history" subtitle="Entry, exit, risk, result and strategy legs for the latest 20 trades" badge={positions.length} />
+      {positions.length === 0 ? <Empty title="No trades recorded yet" text="The first qualified paper experiment will appear here automatically." /> :
+        <div className="divide-y divide-sky-50">{positions.map(item => <article key={item.id} className="p-5">
+          <div className="flex flex-col justify-between gap-4 lg:flex-row">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2"><Badge className={item.status === 'OPEN' ? 'bg-sky-100 text-sky-700' : (item.realized_pnl_inr ?? 0) >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}>{item.status ?? 'CLOSED'}</Badge><h3 className="font-bold text-slate-900">{item.strategy}</h3><Badge variant="outline">{item.exit_reason?.replaceAll('_', ' ') ?? 'Monitoring'}</Badge></div>
+              <p className="mt-2 text-sm text-slate-600">{item.legs.map(leg => `${leg.transaction_type} ${leg.strike} ${leg.option_type} × ${leg.quantity} @ ₹${leg.entry_price}`).join(' · ')}</p>
+              <p className="mt-2 text-xs text-slate-400">Opened {new Date(item.opened_at).toLocaleString('en-IN')} {item.closed_at ? `· Closed ${new Date(item.closed_at).toLocaleString('en-IN')}` : ''} · Expiry {item.expiry}</p>
+            </div>
+            <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-4 lg:w-[480px]">
+              <Mini label="ENTRY POP" value={`${(item.predicted_pop * 100).toFixed(1)}%`} />
+              <Mini label="PLANNED RISK" value={money(item.planned_max_loss_inr)} danger />
+              <Mini label="CHARGES" value={money(item.charges_inr ?? 0)} />
+              <Mini label={item.status === 'OPEN' ? 'OPEN P&L' : 'REALIZED P&L'} value={money(item.status === 'OPEN' ? item.unrealized_pnl_inr ?? 0 : item.realized_pnl_inr ?? 0)} />
+            </div>
+          </div>
+        </article>)}</div>}
+    </div>
+  </section>;
+}
+
+function LedgerStat({ label, value, detail, tone }: { label: string; value: string; detail?: string; tone?: 'good' | 'bad' }) { return <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-3"><p className="text-[11px] font-semibold tracking-wide text-slate-400">{label}</p><p className={`mt-1 text-base font-bold ${tone === 'good' ? 'text-emerald-600' : tone === 'bad' ? 'text-rose-600' : 'text-slate-900'}`}>{value}</p>{detail && <p className="mt-1 text-xs leading-relaxed text-slate-500">{detail}</p>}</div>; }
 
 function money(v: number) { return `${v < 0 ? '-' : ''}₹${Math.abs(v).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`; }
 function Metric({ icon, label, value, meta, positive, progress }: { icon: React.ReactNode; label: string; value: string; meta: string; positive?: boolean; progress?: number }) { return <div className="h-full rounded-2xl border border-sky-100 bg-white p-5 shadow-sm transition hover:border-sky-200 hover:shadow-md"><div className="flex items-center justify-between"><span className="text-xs font-semibold text-slate-400">{label}</span><span className="grid size-8 place-items-center rounded-lg bg-sky-50 text-sky-600 [&>svg]:size-4">{icon}</span></div><p className="mt-3 text-xl font-bold text-slate-900">{value}</p><p className={`mt-1 text-xs ${positive ? 'font-semibold text-emerald-600' : 'text-slate-400'}`}>{meta}</p>{progress !== undefined && <Progress value={progress} className="mt-3 [&_[data-slot=progress-indicator]]:bg-sky-500 [&_[data-slot=progress-track]]:bg-sky-100" />}</div>; }

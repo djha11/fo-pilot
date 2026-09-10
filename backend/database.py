@@ -194,11 +194,20 @@ def paper_trading_summary() -> dict:
                FROM paper_positions WHERE status='CLOSED'
                AND closed_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'"""
         ).fetchone()[0]
+        total = conn.execute(
+            """SELECT COALESCE(SUM(realized_pnl_inr), 0)
+               FROM paper_positions WHERE status='CLOSED'"""
+        ).fetchone()[0]
         trades_today = conn.execute(
             """SELECT COUNT(*) FROM paper_positions
                WHERE opened_at >= date_trunc('day', NOW() AT TIME ZONE 'Asia/Kolkata') AT TIME ZONE 'Asia/Kolkata'"""
         ).fetchone()[0]
-        return {"positions": [_position(row) for row in rows], "daily_realized_pnl_inr": float(daily), "new_trades_today": int(trades_today)}
+        return {
+            "positions": [_position(row) for row in rows],
+            "daily_realized_pnl_inr": float(daily),
+            "total_realized_pnl_inr": float(total),
+            "new_trades_today": int(trades_today),
+        }
 
 
 def save_training_run(report: dict) -> bool:
