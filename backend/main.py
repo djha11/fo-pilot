@@ -328,6 +328,12 @@ async def paper_portfolio():
 async def paper_automation_cycle():
     status = await get_market_status("NSE")
     market_open = status.get("status") == "NORMAL_OPEN"
+    if not market_open:
+        return
+
+    # Persist a fresh view of the complete research universe every market-minute,
+    # including while an existing paper position is being managed.
+    scan = await opportunities()
     position = current_paper_position()
     if position:
         chain = await get_option_chain(position["expiry"])
@@ -335,9 +341,6 @@ async def paper_automation_cycle():
         if pnl is not None:
             maybe_exit(position, pnl)
         return
-    if not market_open:
-        return
-    scan = await opportunities()
     maybe_enter(scan["items"], market_open=True)
 
 
