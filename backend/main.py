@@ -462,7 +462,8 @@ async def paper_automation_loop():
             await paper_automation_cycle()
         except Exception:
             pass
-        await asyncio.sleep(60)
+        # Revalue open positions and evaluate entries frequently during market hours.
+        await asyncio.sleep(5 if current_paper_position() else 15)
 
 
 @app.get("/v1/learning/summary")
