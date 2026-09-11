@@ -339,7 +339,7 @@ def save_scan(payload: dict) -> bool:
                 "NIFTY 50",
                 spot,
                 payload.get("decision", "NO_TRADE"),
-                len(items),
+                int((payload.get("research") or {}).get("qualified_candidates", len(items))),
                 json.dumps(payload),
             ),
         )

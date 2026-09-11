@@ -82,7 +82,7 @@ def maybe_exit(position: dict, pnl: float, now: datetime | None = None, manual: 
     return closed
 
 
-def maybe_enter(candidates: list[dict], market_open: bool) -> dict | None:
+def maybe_enter(candidates: list[dict], market_open: bool, manual: bool = False) -> dict | None:
     if not market_open or not candidates or current_paper_position():
         return None
     summary = paper_trading_summary()
@@ -96,9 +96,12 @@ def maybe_enter(candidates: list[dict], market_open: bool) -> dict | None:
         return None
     candidate = candidates[0]
     remaining_daily_risk = daily_limit + min(0.0, summary["daily_realized_pnl_inr"])
-    if not candidate.get("qualified_for_paper_entry", False):
+    if manual:
+        if not candidate.get("manual_entry_eligible", False):
+            return None
+    elif not candidate.get("qualified_for_paper_entry", False):
         return None
-    if candidate["probability_of_profit"] < minimum_pop or candidate["max_loss_inr"] > trade_limit:
+    if (not manual and candidate["probability_of_profit"] < minimum_pop) or candidate["max_loss_inr"] > trade_limit:
         return None
     if candidate["max_loss_inr"] > remaining_daily_risk:
         return None

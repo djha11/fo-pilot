@@ -334,20 +334,27 @@ async def opportunities():
         if not regime_pass and "REGIME_FILTER_BLOCKED" not in candidate["rejection_reasons"]:
             candidate["rejection_reasons"].append("REGIME_FILTER_BLOCKED")
         candidate["qualified_for_paper_entry"] = not candidate["rejection_reasons"]
+        candidate["manual_entry_eligible"] = not [
+            reason for reason in candidate["rejection_reasons"]
+            if reason != "POP_BELOW_MINIMUM"
+        ]
         candidate["final_classification"] = (
             "PAPER_SELECTED_ELIGIBLE" if candidate["qualified_for_paper_entry"]
+            else "MANUAL_POP_REVIEW" if candidate["manual_entry_eligible"]
             else "PAPER_RESEARCH_ONLY"
         )
     qualified = [item for item in research_candidates if item["qualified_for_paper_entry"]]
-    items = qualified[:5]
+    # The dashboard receives the complete ranked research universe. Automatic
+    # execution still consumes only qualified candidates below.
+    items = research_candidates
     for rank, item in enumerate(items, start=1):
         item["rank"] = rank
     payload = {
         "items": items,
-        "decision": "TRADE_CANDIDATES" if items else "NO_TRADE",
+        "decision": "TRADE_CANDIDATES" if qualified else "NO_TRADE",
         "reason": (
             "Qualified candidates are ready for one-tap paper approval."
-            if items
+            if qualified
             else f"Historical loss-avoidance filter blocked trading: {', '.join(regime_reasons)}."
             if training_report and training_report.get("activated") and not regime_safe
             else "No spread passed POP, ₹350 loss, reward/risk, liquidity and regime checks."
@@ -424,7 +431,10 @@ async def paper_automation_cycle():
             maybe_exit(position, pnl)
         return
     if paper_settings()["automatic_order_placement"]:
-        maybe_enter(scan["items"], market_open=True)
+        maybe_enter(
+            [item for item in scan["items"] if item.get("qualified_for_paper_entry")],
+            market_open=True,
+        )
 
 
 @app.post("/v1/paper/orders/{opportunity_id}")
@@ -437,8 +447,10 @@ async def place_paper_order(opportunity_id: str):
     scan = await opportunities()
     candidate = next((item for item in scan["items"] if item["id"] == opportunity_id), None)
     if not candidate:
-        raise HTTPException(404, "This opportunity is no longer qualified")
-    opened = maybe_enter([candidate], market_open=True)
+        raise HTTPException(404, "This opportunity is no longer available")
+    if not candidate.get("manual_entry_eligible", False):
+        raise HTTPException(409, "This opportunity fails a non-POP safety control")
+    opened = maybe_enter([candidate], market_open=True, manual=True)
     if not opened:
         raise HTTPException(409, "Risk limits prevented this paper order")
     return {"accepted": True, "mode": "PAPER", "position": opened}
