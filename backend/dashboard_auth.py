@@ -4,11 +4,29 @@ import os
 import secrets
 import smtplib
 import ssl
+from pathlib import Path
 from email.message import EmailMessage
 
 
+SECRET_FILE = Path("/run/secrets/dashboard-auth.env")
+
+
+def _setting(name: str, default: str = "") -> str:
+    value = os.getenv(name)
+    if value is not None:
+        return value
+    try:
+        for line in SECRET_FILE.read_text(encoding="utf-8").splitlines():
+            key, sep, item = line.partition("=")
+            if sep and key.strip() == name:
+                return item.strip()
+    except OSError:
+        pass
+    return default
+
+
 def _secret() -> bytes:
-    value = os.getenv("DASHBOARD_AUTH_SECRET", "")
+    value = _setting("DASHBOARD_AUTH_SECRET")
     if len(value) < 32:
         raise RuntimeError("DASHBOARD_AUTH_SECRET must contain at least 32 characters")
     return value.encode()
@@ -40,11 +58,11 @@ def password_matches(password: str, encoded: str | None) -> bool:
 
 
 def send_otp(email: str, otp: str) -> None:
-    host = os.getenv("SMTP_HOST", "")
-    username = os.getenv("SMTP_USERNAME", "")
-    password = os.getenv("SMTP_PASSWORD", "")
-    sender = os.getenv("SMTP_FROM", username)
-    port = int(os.getenv("SMTP_PORT", "587"))
+    host = _setting("SMTP_HOST")
+    username = _setting("SMTP_USERNAME")
+    password = _setting("SMTP_PASSWORD")
+    sender = _setting("SMTP_FROM", username)
+    port = int(_setting("SMTP_PORT", "587"))
     if not all((host, username, password, sender)):
         raise RuntimeError("OTP email service is not configured")
     message = EmailMessage()
