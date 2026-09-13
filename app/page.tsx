@@ -402,6 +402,17 @@ export default function Home() {
           <p className="text-xs text-slate-400">
             {marketOpen ? 'Market open' : 'Market closed'}
           </p>
+          <div className="mt-4 border-t border-white/10 pt-4">
+            <p className="truncate text-xs text-slate-400">{auth.email}</p>
+            <button
+              type="button"
+              onClick={auth.signOut}
+              className="mt-2 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-slate-200 hover:bg-white/10 hover:text-white"
+            >
+              <LogOut className="size-4" />
+              Logout
+            </button>
+          </div>
         </div>
       </aside>
       {menu && (
@@ -423,6 +434,16 @@ export default function Home() {
           </Badge>
           <div className="ml-auto flex items-center gap-4">
             <Bell className="size-5 text-slate-500" />
+            <button
+              type="button"
+              onClick={auth.signOut}
+              aria-label="Logout"
+              title="Logout"
+              className="flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 transition hover:border-sky-300 hover:bg-sky-50 hover:text-sky-700"
+            >
+              <LogOut className="size-4" />
+              <span className="hidden sm:inline">Logout</span>
+            </button>
             <div className="grid size-9 place-items-center rounded-full bg-blue-600 text-xs font-bold text-white">
               DK
             </div>
