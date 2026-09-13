@@ -7,6 +7,7 @@ const ALLOWED = new Set([
   'siajha18@gmail.com',
   'djjhaimu@gmail.com',
   'keshavjha63@gmail.com',
+  'keshavkumarj63@gmail.com',
 ]);
 type AuthState = {
   loading: boolean;

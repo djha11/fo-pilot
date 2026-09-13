@@ -61,7 +61,7 @@ COGNITO_POOL_ID = os.getenv("COGNITO_POOL_ID", "ap-south-1_Z5SI5HBmg")
 COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID", "5tak108eukdjn8qfv274e2l62t")
 COGNITO_ISSUER = f"https://cognito-idp.ap-south-1.amazonaws.com/{COGNITO_POOL_ID}"
 COGNITO_JWKS = PyJWKClient(f"{COGNITO_ISSUER}/.well-known/jwks.json")
-ALLOWED_DASHBOARD_EMAILS = {"siajha18@gmail.com", "djjhaimu@gmail.com", "keshavjha63@gmail.com"}
+ALLOWED_DASHBOARD_EMAILS = {"siajha18@gmail.com", "djjhaimu@gmail.com", "keshavjha63@gmail.com", "keshavkumarj63@gmail.com"}
 
 @app.middleware("http")
 async def require_dashboard_login(request: Request, call_next):
