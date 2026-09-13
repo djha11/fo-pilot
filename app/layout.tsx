@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
+import { AuthProvider } from './auth';
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -19,7 +20,14 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'F&O Pilot',
     description: 'Risk-first F&O decision engine',
-    images: [{ url: '/og.png', width: 1672, height: 941, alt: 'F&O Pilot risk-first decision engine' }],
+    images: [
+      {
+        url: '/og.png',
+        width: 1672,
+        height: 941,
+        alt: 'F&O Pilot risk-first decision engine',
+      },
+    ],
   },
   twitter: {
     card: 'summary_large_image',
@@ -39,7 +47,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        {children}
+        <AuthProvider>{children}</AuthProvider>
       </body>
     </html>
   );

@@ -1,8 +1,12 @@
 import asyncio
+import os
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 
-from fastapi import FastAPI, HTTPException, Query
+import jwt
+from jwt import PyJWKClient
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -50,8 +54,33 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://fo-pilot-risk-engine.siajha18.chatgpt.site"],
     allow_methods=["GET", "POST", "PUT"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+COGNITO_POOL_ID = os.getenv("COGNITO_POOL_ID", "ap-south-1_Z5SI5HBmg")
+COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID", "5tak108eukdjn8qfv274e2l62t")
+COGNITO_ISSUER = f"https://cognito-idp.ap-south-1.amazonaws.com/{COGNITO_POOL_ID}"
+COGNITO_JWKS = PyJWKClient(f"{COGNITO_ISSUER}/.well-known/jwks.json")
+ALLOWED_DASHBOARD_EMAILS = {"siajha18@gmail.com", "djjhaimu@gmail.com", "keshavjha63@gmail.com"}
+
+@app.middleware("http")
+async def require_dashboard_login(request: Request, call_next):
+    if request.method == "OPTIONS" or request.url.path == "/health":
+        return await call_next(request)
+    header = request.headers.get("authorization", "")
+    if not header.startswith("Bearer "):
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+    try:
+        token = header.split(" ", 1)[1]
+        key = COGNITO_JWKS.get_signing_key_from_jwt(token).key
+        claims = jwt.decode(token, key, algorithms=["RS256"], options={"verify_aud": False}, issuer=COGNITO_ISSUER)
+        email = str(claims.get("email") or claims.get("username") or "").lower()
+        if claims.get("token_use") != "access" or claims.get("client_id") != COGNITO_CLIENT_ID or email not in ALLOWED_DASHBOARD_EMAILS:
+            raise ValueError("User is not approved")
+        request.state.user_email = email
+    except Exception:
+        return JSONResponse({"detail": "Invalid or expired login"}, status_code=401)
+    return await call_next(request)
 
 MAX_LOSS_PER_TRADE = MAX_LOSS_PER_TRADE_INR
 DAILY_LOSS_LIMIT = MAX_DAILY_LOSS_INR
