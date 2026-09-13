@@ -32,6 +32,7 @@ from strategy_config import (
     PAPER_MAX_LOSS_PER_TRADE_INR, PAPER_MIN_POP, PAPER_MIN_TARGET_REWARD_RISK,
     PROFIT_TARGET_RATIO, REAL_MIN_POP, STRATEGY_VERSION,
 )
+from ai_advisor import analyse as ai_analyse, status as ai_status
 from upstox import (
     UpstoxMarketDataError,
     UpstoxSandboxError,
@@ -472,6 +473,18 @@ async def paper_automation_loop():
 @app.get("/v1/learning/summary")
 def get_learning_summary():
     return {**learning_summary(), "historical_training": latest_training_run()}
+
+
+@app.get("/v1/ai/status")
+def get_ai_status():
+    return ai_status()
+
+
+@app.post("/v1/ai/analysis")
+async def get_ai_analysis(force: bool = Query(default=False)):
+    # The model receives the same bounded, ranked research snapshot shown on the
+    # dashboard. It is advisory and has no access to broker/order functions.
+    return await ai_analyse(await opportunities(), force=force)
 
 
 @app.post("/v1/learning/completed-paper-trade")
