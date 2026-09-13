@@ -77,6 +77,35 @@ def test_research_mode_is_not_truncated_to_five_candidates():
     assert [item["rank"] for item in result] == list(range(1, len(result) + 1))
 
 
+def test_scans_multiple_defined_risk_hedge_widths():
+    rows = [_row(strike, put_pop=0.80) for strike in (23547, 23548, 23549, 23550)]
+    for row in rows:
+        row["put_options"]["market_data"]["ask_price"] = 9
+        row["put_options"]["market_data"]["bid_price"] = 9.5
+    result = scan_vertical_spreads(
+        rows, lot_size=1, minimum_pop=0.75, include_rejected=True,
+        maximum_strike_steps=3,
+    )
+    widths = {
+        abs(item["legs"][0]["strike"] - item["legs"][1]["strike"])
+        for item in result
+    }
+    assert widths == {1, 2, 3}
+
+
+def test_editable_loss_and_profit_target_are_used_by_scanner():
+    lower = _row(23549, put_pop=0.80)
+    upper = _row(23550, put_pop=0.80)
+    lower["put_options"]["market_data"]["ask_price"] = 9
+    upper["put_options"]["market_data"]["bid_price"] = 9.5
+    result = scan_vertical_spreads(
+        [lower, upper], lot_size=75, minimum_pop=0.75,
+        maximum_loss=100, profit_target_ratio=0.25, include_rejected=True,
+    )
+    assert result[0]["qualification_checks"]["MAX_LOSS"] is True
+    assert result[0]["profit_target_inr"] == result[0]["max_profit_inr"] * 0.25
+
+
 def test_accepts_only_when_both_limits_pass():
     lower = _row(23549)
     upper = _row(23550)

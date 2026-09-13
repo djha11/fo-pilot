@@ -100,6 +100,9 @@ def scan_vertical_spreads(
     chain: list[dict], lot_size: int = NIFTY_MARKET_LOT, minimum_pop: float = MIN_POP,
     include_rejected: bool = False, minimum_target_reward_risk: float = PAPER_MIN_TARGET_REWARD_RISK,
     minimum_expected_value: float = 0.0, expiry_day_minimum_pop: float = EXPIRY_DAY_MIN_POP,
+    maximum_loss: float = PAPER_MAX_LOSS_PER_TRADE_INR,
+    profit_target_ratio: float = PROFIT_TARGET_RATIO,
+    maximum_strike_steps: int = 4,
 ) -> list[dict]:
     if not chain:
         return []
@@ -110,8 +113,12 @@ def scan_vertical_spreads(
     min_pop = max(minimum_pop, expiry_day_minimum_pop if is_expiry_day else minimum_pop)
     candidates: list[Opportunity] = []
 
+    # Evaluate several hedge widths. Restricting the scan to adjacent strikes can
+    # miss priceable, defined-risk spreads whose nearer hedge has a poor quote.
+    maximum_strike_steps = min(max(int(maximum_strike_steps), 1), 6)
     for index in range(len(rows) - 1):
-        lower, upper = rows[index], rows[index + 1]
+      for step in range(1, min(maximum_strike_steps, len(rows) - index - 1) + 1):
+        lower, upper = rows[index], rows[index + step]
         lower_strike = _number(lower.get("strike_price"))
         upper_strike = _number(upper.get("strike_price"))
         width = upper_strike - lower_strike
@@ -135,6 +142,7 @@ def scan_vertical_spreads(
                         max_loss, spot, short_put, long_put, upper_strike,
                         lower_strike, "SELL", "BUY", lot_size, min_pop,
                         minimum_target_reward_risk, minimum_expected_value,
+                        maximum_loss, profit_target_ratio,
                     )
                 )
 
@@ -155,6 +163,7 @@ def scan_vertical_spreads(
                         max_loss, spot, short_call, long_call, lower_strike,
                         upper_strike, "SELL", "BUY", lot_size, min_pop,
                         minimum_target_reward_risk, minimum_expected_value,
+                        maximum_loss, profit_target_ratio,
                     )
                 )
 
@@ -187,9 +196,11 @@ def _build(
     minimum_pop: float,
     minimum_target_reward_risk: float,
     minimum_expected_value: float,
+    maximum_loss: float,
+    profit_target_ratio: float,
 ) -> Opportunity:
     reward_risk = max_profit / max(max_loss, 1)
-    profit_target = max_profit * PROFIT_TARGET_RATIO
+    profit_target = max_profit * profit_target_ratio
     target_reward_risk = profit_target / max(max_loss, 1)
     # Transparent stop/target EV proxy. Charges are already included in both
     # max_profit and max_loss. It is a safety gate, not a calibrated forecast.
@@ -198,7 +209,7 @@ def _build(
     checks = {
         "POP": pop >= minimum_pop,
         "LIQUIDITY": _is_liquid(short_option) and _is_liquid(long_option),
-        "MAX_LOSS": 0 < max_loss <= PAPER_MAX_LOSS_PER_TRADE_INR,
+        "MAX_LOSS": 0 < max_loss <= maximum_loss,
         "REWARD_RISK": target_reward_risk >= minimum_target_reward_risk,
         "EV": expected_value > minimum_expected_value,
         "REGIME": None,

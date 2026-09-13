@@ -306,6 +306,8 @@ async def opportunities():
                 minimum_target_reward_risk=configured["minimum_target_reward_risk"],
                 minimum_expected_value=configured["minimum_expected_value_inr"],
                 expiry_day_minimum_pop=configured["expiry_day_minimum_probability_of_profit"],
+                maximum_loss=configured["paper_max_loss_per_trade_inr"],
+                profit_target_ratio=configured["profit_target_ratio"],
             )
         )
     research_candidates.sort(
@@ -467,7 +469,9 @@ async def paper_automation_loop():
         except Exception:
             pass
         # Revalue open positions and evaluate entries frequently during market hours.
-        await asyncio.sleep(5 if current_paper_position() else 15)
+        # A ten-second idle cadence reduces the chance of missing a transient
+        # qualifying quote while avoiding an excessive REST polling rate.
+        await asyncio.sleep(5 if current_paper_position() else 10)
 
 
 @app.get("/v1/learning/summary")

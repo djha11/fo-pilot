@@ -23,6 +23,13 @@ TIME_EXIT_HOUR = 15
 TIME_EXIT_MINUTE = 15
 
 
+def _paper_setting(key: str, default):
+    settings = get_engine_setting("paper_trading_settings", {})
+    if isinstance(settings, dict) and key in settings:
+        return settings[key]
+    return get_engine_setting(key, default)
+
+
 def paper_pnl(position: dict, chain_rows: list[dict]) -> float | None:
     options = {}
     for row in chain_rows:
@@ -49,8 +56,8 @@ def paper_pnl(position: dict, chain_rows: list[dict]) -> float | None:
 
 def maybe_exit(position: dict, pnl: float, now: datetime | None = None, manual: bool = False) -> dict | None:
     now = now or datetime.now(IST)
-    profit_ratio = float(get_engine_setting("profit_target_ratio", PROFIT_CAPTURE_RATIO))
-    exit_time = str(get_engine_setting("timed_exit", "15:15"))
+    profit_ratio = float(_paper_setting("profit_target_ratio", PROFIT_CAPTURE_RATIO))
+    exit_time = str(_paper_setting("timed_exit", "15:15"))
     try:
         exit_hour, exit_minute = (int(part) for part in exit_time.split(":", 1))
     except (TypeError, ValueError):
@@ -86,10 +93,10 @@ def maybe_enter(candidates: list[dict], market_open: bool, manual: bool = False)
     if not market_open or not candidates or current_paper_position():
         return None
     summary = paper_trading_summary()
-    daily_limit = float(get_engine_setting("paper_max_daily_loss_inr", PAPER_MAX_DAILY_LOSS_INR))
-    trade_limit = float(get_engine_setting("paper_max_loss_per_trade_inr", PAPER_MAX_LOSS_PER_TRADE_INR))
-    max_trades = int(get_engine_setting("max_new_trades_per_day", MAX_NEW_TRADES_PER_DAY))
-    minimum_pop = float(get_engine_setting("paper_minimum_probability_of_profit", PAPER_MIN_POP))
+    daily_limit = float(_paper_setting("paper_max_daily_loss_inr", PAPER_MAX_DAILY_LOSS_INR))
+    trade_limit = float(_paper_setting("paper_max_loss_per_trade_inr", PAPER_MAX_LOSS_PER_TRADE_INR))
+    max_trades = int(_paper_setting("max_new_trades_per_day", MAX_NEW_TRADES_PER_DAY))
+    minimum_pop = float(_paper_setting("paper_minimum_probability_of_profit", PAPER_MIN_POP))
     if summary["daily_realized_pnl_inr"] <= -daily_limit:
         return None
     if summary.get("new_trades_today", 0) >= max_trades:
