@@ -1,5 +1,8 @@
 import json
 import os
+import hashlib
+import hmac
+import secrets
 from contextlib import contextmanager
 
 import psycopg
@@ -114,8 +117,119 @@ def initialise_database() -> bool:
             )
             """
         )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_users (
+                email TEXT PRIMARY KEY,
+                password_hash TEXT,
+                verified_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_otps (
+                email TEXT PRIMARY KEY REFERENCES dashboard_users(email) ON DELETE CASCADE,
+                otp_hash TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS dashboard_sessions (
+                token_hash TEXT PRIMARY KEY,
+                email TEXT NOT NULL REFERENCES dashboard_users(email) ON DELETE CASCADE,
+                purpose TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
         conn.commit()
         return True
+
+
+def ensure_dashboard_users(emails: set[str]) -> None:
+    with connection() as conn:
+        if conn is None:
+            raise RuntimeError("Database unavailable")
+        for email in emails:
+            conn.execute("INSERT INTO dashboard_users(email) VALUES (%s) ON CONFLICT DO NOTHING", (email,))
+        conn.commit()
+
+
+def save_dashboard_otp(email: str, otp_hash: str) -> None:
+    with connection() as conn:
+        if conn is None:
+            raise RuntimeError("Database unavailable")
+        conn.execute("DELETE FROM dashboard_sessions WHERE expires_at < NOW()")
+        conn.execute("""INSERT INTO dashboard_otps(email, otp_hash, expires_at)
+            VALUES (%s,%s,NOW() + INTERVAL '10 minutes')
+            ON CONFLICT(email) DO UPDATE SET otp_hash=EXCLUDED.otp_hash,
+            expires_at=EXCLUDED.expires_at, attempts=0, requested_at=NOW()""", (email, otp_hash))
+        conn.commit()
+
+
+def verify_dashboard_otp(email: str, otp_hash: str) -> bool:
+    with connection() as conn:
+        if conn is None:
+            return False
+        row = conn.execute("""UPDATE dashboard_otps SET attempts=attempts+1
+            WHERE email=%s AND expires_at>NOW() AND attempts<5
+            RETURNING otp_hash""", (email,)).fetchone()
+        if not row or not hmac.compare_digest(row[0], otp_hash):
+            conn.commit()
+            return False
+        conn.execute("DELETE FROM dashboard_otps WHERE email=%s", (email,))
+        conn.execute("UPDATE dashboard_users SET verified_at=NOW(), updated_at=NOW() WHERE email=%s", (email,))
+        conn.commit()
+        return True
+
+
+def set_dashboard_password(email: str, password_hash: str) -> None:
+    with connection() as conn:
+        if conn is None:
+            raise RuntimeError("Database unavailable")
+        conn.execute("UPDATE dashboard_users SET password_hash=%s, updated_at=NOW() WHERE email=%s AND verified_at IS NOT NULL", (password_hash, email))
+        conn.commit()
+
+
+def dashboard_password_hash(email: str) -> str | None:
+    with connection() as conn:
+        if conn is None:
+            return None
+        row = conn.execute("SELECT password_hash FROM dashboard_users WHERE email=%s", (email,)).fetchone()
+        return row[0] if row else None
+
+
+def create_dashboard_session(email: str, purpose: str = "access", hours: int = 12) -> str:
+    token = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    with connection() as conn:
+        if conn is None:
+            raise RuntimeError("Database unavailable")
+        conn.execute("INSERT INTO dashboard_sessions(token_hash,email,purpose,expires_at) VALUES (%s,%s,%s,NOW()+(%s * INTERVAL '1 hour'))", (digest, email, purpose, hours))
+        conn.commit()
+    return token
+
+
+def consume_dashboard_session(token: str, purpose: str, delete: bool = False) -> str | None:
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    with connection() as conn:
+        if conn is None:
+            return None
+        row = conn.execute("SELECT email FROM dashboard_sessions WHERE token_hash=%s AND purpose=%s AND expires_at>NOW()", (digest, purpose)).fetchone()
+        if row and delete:
+            conn.execute("DELETE FROM dashboard_sessions WHERE token_hash=%s", (digest,))
+            conn.commit()
+        return row[0] if row else None
+
+
+def delete_dashboard_session(token: str) -> None:
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    with connection() as conn:
+        if conn is not None:
+            conn.execute("DELETE FROM dashboard_sessions WHERE token_hash=%s", (digest,))
+            conn.commit()
 
 
 def get_engine_setting(key: str, default=None):

@@ -3,8 +3,6 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 
-import jwt
-from jwt import PyJWKClient
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +20,11 @@ from database import (
     paper_trading_summary,
     get_engine_setting,
     set_engine_setting,
+    ensure_dashboard_users, save_dashboard_otp, verify_dashboard_otp,
+    set_dashboard_password, dashboard_password_hash, create_dashboard_session,
+    consume_dashboard_session, delete_dashboard_session,
 )
+from dashboard_auth import make_otp, otp_hash, password_hash, password_matches, send_otp
 from learning import apply_learning
 from historical_training import DailyRegime, candles_to_daily, regime_is_safe
 from scanner import scan_vertical_spreads
@@ -57,25 +59,20 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-COGNITO_POOL_ID = os.getenv("COGNITO_POOL_ID", "ap-south-1_Z5SI5HBmg")
-COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID", "5tak108eukdjn8qfv274e2l62t")
-COGNITO_ISSUER = f"https://cognito-idp.ap-south-1.amazonaws.com/{COGNITO_POOL_ID}"
-COGNITO_JWKS = PyJWKClient(f"{COGNITO_ISSUER}/.well-known/jwks.json")
 ALLOWED_DASHBOARD_EMAILS = {"siajha18@gmail.com", "djjhaimu@gmail.com", "keshavjha63@gmail.com", "keshavkumarj63@gmail.com"}
+PUBLIC_PATHS = {"/health", "/v1/auth/request-otp", "/v1/auth/verify-otp", "/v1/auth/set-password", "/v1/auth/login"}
 
 @app.middleware("http")
 async def require_dashboard_login(request: Request, call_next):
-    if request.method == "OPTIONS" or request.url.path == "/health":
+    if request.method == "OPTIONS" or request.url.path in PUBLIC_PATHS:
         return await call_next(request)
     header = request.headers.get("authorization", "")
     if not header.startswith("Bearer "):
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
     try:
         token = header.split(" ", 1)[1]
-        key = COGNITO_JWKS.get_signing_key_from_jwt(token).key
-        claims = jwt.decode(token, key, algorithms=["RS256"], options={"verify_aud": False}, issuer=COGNITO_ISSUER)
-        email = str(claims.get("email") or claims.get("username") or "").lower()
-        if claims.get("token_use") != "access" or claims.get("client_id") != COGNITO_CLIENT_ID or email not in ALLOWED_DASHBOARD_EMAILS:
+        email = consume_dashboard_session(token, "access")
+        if not email or email not in ALLOWED_DASHBOARD_EMAILS:
             raise ValueError("User is not approved")
         request.state.user_email = email
     except Exception:
@@ -97,6 +94,7 @@ async def startup():
     global automation_task
     try:
         initialise_database()
+        ensure_dashboard_users(ALLOWED_DASHBOARD_EMAILS)
     except Exception:
         # Market data remains usable if persistence is temporarily unavailable.
         pass
@@ -112,6 +110,71 @@ async def shutdown():
 class Mode(str, Enum):
     PAPER = "PAPER"
     LIVE = "LIVE"
+
+
+class EmailRequest(BaseModel):
+    email: str
+
+
+class OtpRequest(EmailRequest):
+    otp: str = Field(pattern=r"^\d{6}$")
+
+
+class PasswordSetup(BaseModel):
+    setup_token: str
+    password: str = Field(min_length=10, max_length=128)
+
+
+class LoginRequest(EmailRequest):
+    password: str = Field(min_length=1, max_length=128)
+
+
+@app.post("/v1/auth/request-otp")
+def request_dashboard_otp(body: EmailRequest):
+    email = body.email.strip().lower()
+    if email not in ALLOWED_DASHBOARD_EMAILS:
+        raise HTTPException(403, "This email is not approved")
+    otp = make_otp()
+    save_dashboard_otp(email, otp_hash(email, otp))
+    try:
+        send_otp(email, otp)
+    except Exception:
+        raise HTTPException(503, "Verification email service is not configured")
+    return {"sent": True}
+
+
+@app.post("/v1/auth/verify-otp")
+def verify_otp(body: OtpRequest):
+    email = body.email.strip().lower()
+    if email not in ALLOWED_DASHBOARD_EMAILS or not verify_dashboard_otp(email, otp_hash(email, body.otp)):
+        raise HTTPException(400, "Incorrect or expired verification code")
+    return {"setup_token": create_dashboard_session(email, "setup", 1)}
+
+
+@app.post("/v1/auth/set-password")
+def configure_password(body: PasswordSetup):
+    email = consume_dashboard_session(body.setup_token, "setup", delete=True)
+    if not email:
+        raise HTTPException(401, "Password setup session expired")
+    if not any(c.isupper() for c in body.password) or not any(c.islower() for c in body.password) or not any(c.isdigit() for c in body.password):
+        raise HTTPException(422, "Use uppercase, lowercase and a number")
+    set_dashboard_password(email, password_hash(body.password))
+    token = create_dashboard_session(email)
+    return {"token": token, "email": email}
+
+
+@app.post("/v1/auth/login")
+def dashboard_login(body: LoginRequest):
+    email = body.email.strip().lower()
+    if email not in ALLOWED_DASHBOARD_EMAILS or not password_matches(body.password, dashboard_password_hash(email)):
+        raise HTTPException(401, "Incorrect email or password")
+    return {"token": create_dashboard_session(email), "email": email}
+
+
+@app.post("/v1/auth/logout")
+def dashboard_logout(request: Request):
+    delete_dashboard_session(request.headers.get("authorization", "").split(" ", 1)[1])
+    return {"signed_out": True}
 
 
 class Approval(BaseModel):
