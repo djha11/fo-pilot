@@ -334,10 +334,13 @@ async def opportunities():
         if not regime_pass and "REGIME_FILTER_BLOCKED" not in candidate["rejection_reasons"]:
             candidate["rejection_reasons"].append("REGIME_FILTER_BLOCKED")
         candidate["qualified_for_paper_entry"] = not candidate["rejection_reasons"]
-        candidate["manual_entry_eligible"] = not [
-            reason for reason in candidate["rejection_reasons"]
-            if reason != "POP_BELOW_MINIMUM"
-        ]
+        # Explicit paper orders may override analytical opinions (POP, EV,
+        # reward/risk and regime). Mechanical validity is never overridden.
+        hard_manual_blocks = {"INSUFFICIENT_LIQUIDITY", "DATA_QUALITY_FAILED"}
+        candidate["manual_entry_eligible"] = (
+            candidate["max_profit_inr"] > 0
+            and not hard_manual_blocks.intersection(candidate["rejection_reasons"])
+        )
         candidate["final_classification"] = (
             "PAPER_SELECTED_ELIGIBLE" if candidate["qualified_for_paper_entry"]
             else "MANUAL_POP_REVIEW" if candidate["manual_entry_eligible"]
@@ -449,7 +452,7 @@ async def place_paper_order(opportunity_id: str):
     if not candidate:
         raise HTTPException(404, "This opportunity is no longer available")
     if not candidate.get("manual_entry_eligible", False):
-        raise HTTPException(409, "This opportunity fails a non-POP safety control")
+        raise HTTPException(409, "This opportunity has invalid live prices or insufficient liquidity")
     opened = maybe_enter([candidate], market_open=True, manual=True)
     if not opened:
         raise HTTPException(409, "Risk limits prevented this paper order")
