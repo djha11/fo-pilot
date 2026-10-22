@@ -9,7 +9,7 @@
 [![Mode](https://img.shields.io/badge/mode-paper%20trading-0ea5e9?style=for-the-badge)](#safety-first)
 [![Frontend](https://img.shields.io/badge/frontend-React%2019-2563eb?style=for-the-badge)](#technology)
 [![API](https://img.shields.io/badge/API-FastAPI-059669?style=for-the-badge)](#technology)
-[![License](https://img.shields.io/badge/license-private-334155?style=for-the-badge)](#license)
+[![Visibility](https://img.shields.io/badge/repository-public-16a34a?style=for-the-badge)](https://github.com/djha11/fo-pilot)
 
 [Live application](https://fo-pilot-risk-engine.siajha18.chatgpt.site/) · [Features](#features) · [Local setup](#local-setup) · [Architecture](#architecture)
 
@@ -20,11 +20,23 @@ F&O Pilot is a full-stack decision dashboard for researching NIFTY options sprea
 > [!IMPORTANT]
 > This project is an experimental research and paper-trading system. Probability of profit is an estimate—not a guarantee. Nothing in this repository is financial advice, and real-money trading must remain disabled until the complete system has been independently reviewed, backtested, monitored, and approved for production use.
 
-## Preview
+## Product tour
 
-![F&O Pilot secure access screen](docs/login-screen.png)
+The interface is responsive across desktop and mobile. The live deployment uses email verification, password-based sign-in, expiring backend sessions, and an explicit logout flow. Approved users share the same trading workspace and paper portfolio.
 
-The deployed dashboard uses email verification, password-based sign-in, expiring backend sessions, and an explicit logout flow. Approved users share the same trading workspace and paper portfolio.
+| Secure access | Command dashboard |
+|---|---|
+| ![F&O Pilot secure access screen](docs/login-screen.png) | ![F&O Pilot dashboard overview](docs/dashboard-overview.png) |
+
+| Ranked opportunities | Paper-trade performance |
+|---|---|
+| ![Ranked F&O trade opportunities](docs/trade-opportunities.png) | ![Paper-trade performance analytics](docs/performance.png) |
+
+| Market analysis | Editable risk settings |
+|---|---|
+| ![NIFTY market analysis](docs/market-analysis.png) | ![Editable paper-trading settings](docs/settings.png) |
+
+> Live values depend on the market-data and backend services being connected. Screenshots taken outside market hours may show the dashboard's safe waiting or unavailable state.
 
 ## Features
 
@@ -138,7 +150,7 @@ public/              Brand and public assets
 
 ## License
 
-This repository is currently private and all rights are reserved. Add an explicit open-source license before redistributing or accepting external contributions.
+This repository is publicly visible, but no open-source license has been granted. All rights are reserved. Add an explicit license before accepting redistribution or external contributions.
 
 ---
 
